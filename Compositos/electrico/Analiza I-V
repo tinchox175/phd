@@ -1,0 +1,68 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+import pandas as pd
+
+file = os.getcwd()+"/Archivos/PSS/"
+# print(os.listdir(file))
+
+data = pd.read_csv(file+"PaniPSS prueba 8 25626 RS.txt", sep="\t", header=0)
+print(data.columns)
+
+rin1 = [(data["Rinst 1(Ohm)"][j]) for j in np.arange(len(data))]
+iin1 = [(data["Iinst 1 (mA)"][j]) for j in np.arange(len(data))]
+vin1 = [data["Vinst 1 (V)"][j] for j in np.arange(len(data))]
+tdif = [data["Tiempo (min)"][j] for j in np.arange(len(data))]
+vdif = np.diff((vin1))
+idif = np.diff(iin1)
+rdif = vdif/idif*1000
+
+i = 250
+f = 265
+
+i = 3
+f = -1
+
+plt.figure(figsize=(8, 6))
+cmap = plt.get_cmap('viridis')
+plt.plot(vin1[i:f], abs(np.array(iin1[i:f])), color='gray', alpha=0.5)
+plt.scatter(vin1[i:f], abs(np.array(iin1[i:f])), c=tdif[i:f], cmap=cmap)
+plt.xlabel('Voltage (V)')
+plt.ylabel('Current (mA)')
+cbar = plt.colorbar()
+cbar.set_label('Time (min)')
+plt.yscale('log')
+plt.grid()
+# plt.title('I-V Characteristics')
+plt.show()
+
+
+plt.figure(figsize=(8, 6))
+plt.plot(tdif[i+1:f], rdif[i:f], color='gray', alpha=0.5, label='$R_{dif}$')
+plt.scatter(tdif[i+1:f], rdif[i:f], c=vin1[i+1:f], lw=1, cmap=cmap)
+plt.plot(tdif[i:f], rin1[i:f], color='red', alpha=0.5, label='$R_{in}$')
+plt.xlabel('Time (min)')
+plt.ylabel('$R_{dif}$ (Ohm)')
+cbar = plt.colorbar()
+cbar.set_label('Voltage (V)')
+# plt.title('I-V Characteristics')
+plt.yscale('symlog')
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.plot(vin1[i+1:f], vdif[i:f], color='gray', alpha=0.5)
+plt.scatter(vin1[i+1:f], vdif[i:f], c=tdif[i+1:f], lw=1, cmap=cmap)
+plt.xlabel('$V$ (V)')
+plt.ylabel('$\Delta I$ (mA)')
+# plt.title('I-V Characteristics')
+# plt.yscale('symlog')
+plt.show()
+
+plt.figure(figsize=(8, 6))
+plt.plot(vin1[i:f], rin1[i:f], color='gray', alpha=0.5)
+plt.scatter(vin1[i:f], rin1[i:f], c=tdif[i:f], lw=1, cmap=cmap)
+plt.xlabel('$V$ (V)')
+plt.ylabel('$R_{in}$ (Ohm)')
+# plt.title('I-V Characteristics')
+# plt.yscale('symlog')
+plt.show()

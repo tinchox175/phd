@@ -1,3 +1,4 @@
+#%%
 import os
 import glob
 import numpy as np
@@ -9,7 +10,7 @@ import matplotlib.animation as animation
 from scipy.signal import savgol_filter
 
 # --- PLOTTING TOGGLES ---
-IV_PLOT_MODE = 'RAW'  # Options: 'RAW', 'FILTERED', 'BOTH'
+IV_PLOT_MODE = 'BOTH'  # Options: 'RAW', 'FILTERED', 'BOTH'
 GENERATE_GIF = False    # Set to False if you just want the static dashboard
 
 def plot_dashboard(df, freq, amp, shape="Unknown", cycles="Unknown"):
@@ -218,31 +219,30 @@ def plot_impedance_spectrum(df, dt):
     
     plt.tight_layout()
     plt.show()
+#%%
+# ---------------------------------------------------------
+# PASTE THE PATH TO YOUR FILE OR FOLDER HERE
+# ---------------------------------------------------------
+# Example 1: A specific file
+# DATA_PATH = "Sweep_Data_20260505_132752/burst_20Hz_0.3V.csv"
 
-if __name__ == "__main__":
-    # ---------------------------------------------------------
-    # PASTE THE PATH TO YOUR FILE OR FOLDER HERE
-    # ---------------------------------------------------------
-    # Example 1: A specific file
-    # DATA_PATH = "Sweep_Data_20260505_132752/burst_20Hz_0.3V.csv"
+# Example 2: A whole folder!
+DATA_PATH = "/home/martin/LBT/phd/Iridatos/Adq. Osc/SQU_100Hz_100Hz_Sweep_Data_20260518_193738" # <-- Update this to your actual folder name
+
+if os.path.isfile(DATA_PATH):
+    # Process a single file
+    analyze_offline_file(DATA_PATH)
+    plt.show()
     
-    # Example 2: A whole folder!
-    DATA_PATH = "C:\\LBT\\phd\\Iridatos\\SQU_1000Hz_1000Hz_Sweep_Data_20260518_195409\\burst_1000Hz_0.15V.csv" # <-- Update this to your actual folder name
-    
-    if os.path.isfile(DATA_PATH):
-        # Process a single file
-        analyze_offline_file(DATA_PATH)
-        plt.show()
-        
-    elif os.path.isdir(DATA_PATH):
-        # Process all CSVs in a folder automatically
-        csv_files = glob.glob(os.path.join(DATA_PATH, "*.csv"))
-        if not csv_files:
-            print(f"No CSV files found in {DATA_PATH}")
-        else:
-            for file in csv_files:
-                analyze_offline_file(file)
-            plt.show() # Display all generated dashboards simultaneously
-            
+elif os.path.isdir(DATA_PATH):
+    # Process all CSVs in a folder automatically
+    csv_files = glob.glob(os.path.join(DATA_PATH, "*.csv"))
+    if not csv_files:
+        print(f"No CSV files found in {DATA_PATH}")
     else:
-        print("Path not found. Please update DATA_PATH to a valid file or folder.")
+        for file in csv_files:
+            analyze_offline_file(file)
+        plt.show() # Display all generated dashboards simultaneously
+        
+else:
+    print("Path not found. Please update DATA_PATH to a valid file or folder.")

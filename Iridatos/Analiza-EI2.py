@@ -1,3 +1,4 @@
+#%%
 import numpy as np
 import re
 import matplotlib.pyplot as plt
@@ -7,6 +8,31 @@ import time
 import itertools
 from functools import partial # <--- ADD THIS
 from scipy.stats import chi2 as chi2_stat
+
+def fit_saved_model(circuit_string, f, Z, sigma_real, sigma_imag):
+    """
+    Fits a single known circuit string and returns the parameters.
+    No need to pre-stack the data; this function handles it.
+    """
+    print(f"\nFitting saved model: {circuit_string}")
+    
+    # Stack the arrays internally
+    f_stacked = np.hstack([f, f])
+    Z_stacked = np.hstack([Z.real, Z.imag])
+    sigma_stacked = np.hstack([sigma_real, sigma_imag])
+    
+    # Run the agnostic evaluator
+    result = evaluate_circuit_agnostic(circuit_string, f_stacked, Z_stacked, sigma_stacked)
+    
+    if result['status'] == 'success':
+        print(f"  ✅ Success! (Reduced Chi2: {result['error']:.4f})")
+        print("  --- Parameters ---")
+        for param, val in result['params'].items():
+            print(f"     {param}: {val:.4e}")
+        return result['params']
+    else:
+        print(f"  ❌ Fit Failed: {result['status']}")
+        return None
 
 def generate_smart_topologies():
     # ==========================================
@@ -197,24 +223,6 @@ def build_circuit_function(circuit_string):
         
     return Z_model_scipy, components
 
-    custom_settings = custom_settings or {}
-    
-    # Extracts all R, C, or L followed by numbers (e.g., ['R1', 'R2', 'C1'])
-    components = re.findall(r'[RCL]\d+', circuit_string)
-    
-    initial_guess, boundlow, boundhigh = [], [], []
-    
-    for comp in components:
-        # Default: guess=1.0, low=0.0, high=np.inf
-        # If the component is in custom_settings, it uses those values instead
-        guess, low, high = custom_settings.get(comp, (0, 0, np.inf))
-        
-        initial_guess.append(guess)
-        boundlow.append(low)
-        boundhigh.append(high)
-        
-    return initial_guess, boundlow, boundhigh
-
 def evaluate_circuit_agnostic(circuit_string, f_stacked, Z_stacked, sigma_stacked):
     try:
         Z_model, comp_names = build_circuit_function(circuit_string)
@@ -243,9 +251,9 @@ def evaluate_circuit_agnostic(circuit_string, f_stacked, Z_stacked, sigma_stacke
                 elif comp.startswith('C'):
                     guesses.append(1e-9)
                     lows.append(0.0)
-                    highs.append(10)
+                    highs.append(1)
                 elif comp.startswith('L'):
-                    guesses.append(1)
+                    guesses.append(10)
                     lows.append(0.0)
                     highs.append(100)
 
@@ -254,7 +262,7 @@ def evaluate_circuit_agnostic(circuit_string, f_stacked, Z_stacked, sigma_stacke
                 Z_model, f_stacked, Z_stacked, 
                 p0=guesses, bounds=(lows, highs), 
                 sigma=sigma_stacked, absolute_sigma=True, 
-                maxfev=100
+                maxfev=1000
             )
             
             # Judge the performance
@@ -314,7 +322,87 @@ def evaluate_circuit_agnostic(circuit_string, f_stacked, Z_stacked, sigma_stacke
     except Exception as e:
         return {'circuit': circuit_string, 'status': f'error: {str(e)}', 'error': np.inf}
 
-def test_manual_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked, exceptions):
+def simulate_fixed_circuit(circuit_string, fixed_params, f_stacked, Z_stacked, sigma_stacked):
+    """
+    Simulates and plots a circuit using exact values provided by the user, 
+    bypassing the solver entirely.
+    """
+    print(f"\n" + "="*50)
+    print(f" FIXED SIMULATION: {circuit_string}")
+    print("="*50)
+
+    # 1. Rebuild the math model
+    Z_model, comp_names = build_circuit_function(circuit_string)
+
+    # Ensure all required components are in the dictionary
+    missing = [c for c in comp_names if c not in fixed_params]
+    if missing:
+        print(f"❌ Error: Your dictionary is missing values for: {missing}")
+        return
+
+    # Extract values in the exact order the mathematical model expects
+    popt = [fixed_params[comp] for comp in comp_names]
+
+    # 2. Calculate the fixed curve
+    Z_fit_stacked = Z_model(f_stacked, *popt)
+
+    # 3. Calculate Error Statistics
+    dof = len(Z_stacked) - len(comp_names)
+    chi2_val = np.sum(((Z_fit_stacked - Z_stacked) / sigma_stacked)**2)
+    chi2_reduced = chi2_val / dof
+    p_value = chi2_stat.sf(chi2_val, dof)
+
+    print(f"  Reduced Chi-Square : {chi2_reduced:.4f}")
+    print(f"  Absolute Chi-Square: {chi2_val:.4e}")
+    print(f"  p-value            : {p_value:.4e}")
+    
+    # ==========================================
+    # 4. GENERATE THE 3-PANEL PLOT
+    # ==========================================
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+
+    # Unstack data for plotting
+    f = f_stacked[:len(f_stacked)//2]
+    Z = Z_stacked[:len(f)] + 1j * Z_stacked[len(f):]
+    Z_fit = Z_fit_stacked[:len(f)] + 1j * Z_fit_stacked[len(f):]
+
+    fig = plt.figure(figsize=(12, 5))
+    gs = GridSpec(2, 3, figure=fig)
+    
+    ax_real = fig.add_subplot(gs[0, 0])
+    ax_imag = fig.add_subplot(gs[1, 0], sharex=ax_real)
+    ax_nyq = fig.add_subplot(gs[:, 1:])
+    
+    # Top Left: Real vs Freq
+    ax_real.semilogx(f, Z.real, 'o', color='black', markersize=5, mfc='none', label='Data')
+    ax_real.semilogx(f, Z_fit.real, '-', color='blue', linewidth=2, label='Simulation')
+    ax_real.set_ylabel(r"Re(Z) [$\Omega$]")
+    ax_real.grid(True, which='both', ls='--', alpha=0.5)
+    ax_real.legend(loc='best')
+    plt.setp(ax_real.get_xticklabels(), visible=False)
+    
+    # Bottom Left: Imag vs Freq
+    ax_imag.semilogx(f, -Z.imag, 'o', color='black', markersize=5, mfc='none')
+    ax_imag.semilogx(f, -Z_fit.imag, '-', color='blue', linewidth=2)
+    ax_imag.set_xlabel("Frequency [Hz]")
+    ax_imag.set_ylabel(r"-Im(Z) [$\Omega$]")
+    ax_imag.grid(True, which='both', ls='--', alpha=0.5)
+    
+    # Right: Nyquist
+    ax_nyq.plot(Z.real, -Z.imag, 'o', color='black', markersize=6, mfc='none', label='Data')
+    ax_nyq.plot(Z_fit.real, -Z_fit.imag, '-', color='blue', linewidth=2, label='Simulation')
+    ax_nyq.set_aspect('equal', adjustable='datalim') 
+    ax_nyq.set_title(f"Fixed Sim: {circuit_string}", fontweight='bold')
+    ax_nyq.set_xlabel(r"Re(Z) [$\Omega$]")
+    ax_nyq.set_ylabel(r"-Im(Z) [$\Omega$]")
+    ax_nyq.grid(True, ls='--', alpha=0.5)
+    ax_nyq.legend(loc='best')
+    
+    plt.tight_layout()
+    plt.show()
+
+def test_manual_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked):
     """
     Manually tests a single circuit string, prints the statistics, 
     and generates a 3-panel plot if successful.
@@ -323,8 +411,8 @@ def test_manual_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked, exc
     print(f" MANUAL TEST: {circuit_string}")
     print("="*50)
     
-    # 1. Run the same robust fitting engine used by the parallel sweep
-    result = evaluate_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked, exceptions)
+    # 💥 FIXED: Now calling the Agnostic engine and dropping the exceptions argument
+    result = evaluate_circuit_agnostic(circuit_string, f_stacked, Z_stacked, sigma_stacked)
     
     if result['status'] != 'success':
         print(f"\n❌ Fit Failed.")
@@ -335,6 +423,8 @@ def test_manual_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked, exc
         
     # 2. Print the final statistics and parameters
     print(f"\n✅ Fit Successful!")
+    print(f"  Components (k)     : {result['k_params']}")
+    print(f"  BIC Score          : {result['bic']:.4e}")
     print(f"  Reduced Chi-Square : {result['error']:.4f}")
     print(f"  Absolute Chi-Square: {result['chi2_abs']:.4e}")
     print(f"  p-value            : {result['p_value']:.4e}")
@@ -394,178 +484,99 @@ def test_manual_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked, exc
     plt.tight_layout()
     plt.show()
 
-# Ajustador automatico
-if __name__ == '__main__':
-    dire = 'E:/trabajo/phd/phd/Iridatos'
-    data = np.genfromtxt(f'{dire}/EI/2X3_1234_100mVac_T290.00K_1635_Offset_0.00_mV.txt', unpack=True, delimiter=',', skip_header=1)
-    
-    l = 500
-    f = data[0][0:l]
-    Z = data[1][0:l] + 1j*data[3][0:l]
-    
-    # Stack the arrays for SciPy
-    f_stacked = np.hstack([f, f])
-    Z_stacked = np.hstack([Z.real, Z.imag])
-    sigma_real = np.concatenate([np.ones_like(f[0:5]) * 1, np.ones_like(f[5:10]) * 6, np.ones_like(f[10:500]) * 6])  # 
-    sigma_imag = sigma_real.copy()  # Assuming same error for real and imaginary partsx
-    
-    # ⚠️ SAFEGUARD: If your equipment recorded 0.0 error for any point, the math will divide 
-    # by zero and explode. We enforce a tiny minimum error floor (e.g., 1e-9).
-    sigma_real = np.where(sigma_real <= 0, 1, sigma_real)
-    sigma_imag = np.where(sigma_imag <= 0, 1, sigma_imag)
-    
-    # Stack them exactly like we stacked f and Z
-    sigma_stacked = np.hstack([sigma_real, sigma_imag])
-    RUN_MANUAL_TEST = False  # <--- Change to False to run the full sweep
-    if RUN_MANUAL_TEST:
-        # Paste the exact string you want to investigate here
-        target_circuit = 'C1-p(C2,R1)-p(L1,C3-R2,L2-R3)'
-        
-        test_manual_circuit(target_circuit, f_stacked, Z_stacked, sigma_stacked)
-    else:
-        # ==========================================
-        # 1. LOAD YOUR DATA
-        # ==========================================
-        # (Using your previous file-loading logic)
-        
-        # ==========================================
-        # 2. GENERATE AND FILTER TOPOLOGIES
-        # ==========================================
-        print("Generating mathematically unique generic topologies...")
-        all_generics = generate_smart_topologies()
-        
-        print("Numbering components and applying DRT Physics Filter...")
-        circuit_list = []
-        for generic in all_generics:
-            numbered_circuit = assign_component_numbers(generic)
-            if filter_by_physics(numbered_circuit):
-                circuit_list.append(numbered_circuit)
-                
-        print(f"Sweep space successfully reduced to {len(circuit_list)} highly-probable circuits.\n")
+#%%
+dire = 'E:/trabajo/phd/phd/Iridatos'
+dire = '/home/martin/LBT/phd/Iridatos'
+data = np.genfromtxt(f'{dire}/EI/2X3_1234_100mVac_T290.00K_1635_Offset_0.00_mV.txt', unpack=True, delimiter=',', skip_header=1)
 
-        # ==========================================
-        # 3. DEFINE BOUNDS & EXCEPTIONS
-        # ==========================================
-        # NOTE: Because the generator numbers components strictly 1, 2, 3 from left to right,
-        # you won't see "L7" or "R7". Your inductor will always be L1. 
-        # Your capacitors will be C1 and C2.
-        
+l = 500
+f = data[0][0:l]
+Z = data[1][0:l] + 1j*data[3][0:l]
 
-        # ==========================================
-        # 4. EXECUTE MULTI-CORE FUNNEL SWEEP
-        # ==========================================
-        print(f"Starting parallel sweep across {len(circuit_list)} circuits...")
-        t0 = time.time()
-        
-        results = []
-        
-        # Wrap our worker function to freeze the constant arguments.
-        # This prevents us from sending duplicates of your data arrays to every core.
-        worker_func = partial(
-            evaluate_circuit_agnostic, 
-            f_stacked=f_stacked, 
-            Z_stacked=Z_stacked, 
-            sigma_stacked=sigma_stacked, # <--- NEW
-        )
-        
-        # Add max_workers to avoid overloading your specific CPU architecture
-        with concurrent.futures.ProcessPoolExecutor() as executor:
+# Error limits setup
+sigma_real = np.concatenate([np.ones_like(f[0:5]) * 1, np.ones_like(f[5:10]) * 6, np.ones_like(f[10:500]) * 6])  
+sigma_imag = sigma_real.copy() 
+
+sigma_real = np.where(sigma_real <= 0, 1, sigma_real)
+sigma_imag = np.where(sigma_imag <= 0, 1, sigma_imag)
+
+# Stack the arrays for SciPy
+f_stacked = np.hstack([f, f])
+Z_stacked = np.hstack([Z.real, Z.imag])
+sigma_stacked = np.hstack([sigma_real, sigma_imag])
+
+# (Assuming your f, Z, and sigma arrays are already loaded and stacked)
+
+RUN_FIXED_SIMULATION = True
+
+if RUN_FIXED_SIMULATION:
+    target_circuit = 'p(L1,R1)-p(L2,C1-R2)-p(R3,C2-R4)'
+    
+    # Paste your saved values here
+    saved_values = {
+       'R1': -4.99e2,
+       'C1': 0.9-6,
+       'L1': 11.1e1,
+       'R2': 4.16e2,
+       'C2': 4.28e-8,
+       'R3': 5.01e2,
+       'R4': 7.8e-1,
+       'L2': 9.74e-3
+    }
+    
+    simulate_fixed_circuit(target_circuit, saved_values, f_stacked, Z_stacked, sigma_stacked)
+else:
+    RUN_MANUAL_TEST = True
+#%%
+if RUN_MANUAL_TEST:
+    target_circuit = 'p(L1,R1)-p(L2,C1-R2)-p(R3,C2-R4)'
+    test_manual_circuit(target_circuit, f_stacked, Z_stacked, sigma_stacked)
+    
+else:
+    print("Generating mathematically unique generic topologies...")
+    all_generics = generate_smart_topologies()
+    
+    print("Numbering components and applying DRT Physics Filter...")
+    circuit_list = []
+    for generic in all_generics:
+        numbered_circuit = assign_component_numbers(generic)
+        if filter_by_physics(numbered_circuit):
+            circuit_list.append(numbered_circuit)
             
-            # Now we only send the strings! Much cleaner.
-            futures = executor.map(worker_func, circuit_list)
+    print(f"Sweep space successfully reduced to {len(circuit_list)} highly-probable circuits.\n")
+
+    print(f"Starting parallel sweep across {len(circuit_list)} circuits...")
+    t0 = time.time()
+    
+    results = []
+    worker_func = partial(
+        evaluate_circuit_agnostic, 
+        f_stacked=f_stacked, 
+        Z_stacked=Z_stacked, 
+        sigma_stacked=sigma_stacked,
+    )
+    
+    # 💥 CHANGED TO THREADS 💥 
+    # This completely bypasses the Windows multiprocessing crash in Jupyter
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = executor.map(worker_func, circuit_list)
+        for res in futures:
+            results.append(res)
             
-            for res in futures:
-                results.append(res)
-                
-        tf = time.time()
-        print(f"\nSweep completed in {tf - t0:.2f} seconds.")
-        
-        # ==========================================
-        # 5. SORT AND DISPLAY WINNERS
-        # ==========================================
-        successful_fits = [r for r in results if r['status'] == 'success']
-        
-        # 💥 NEW: Sort strictly by the BIC score (Lowest is Best)
-        successful_fits.sort(key=lambda x: x['bic'])
-        
-        print(f"\n--- TOP 3 CIRCUITS OUT OF {len(successful_fits)} SUCCESSFUL FITS ---")
-        print("(Ranked by Bayesian Information Criterion - Penalizes Complexity)")
-        
-        for i in range(min(3, len(successful_fits))):
-            best = successful_fits[i]
-            print(f"\n#{i+1}: {best['circuit']}")
-            print(f"  Components (k)     : {best['k_params']}")
-            print(f"  BIC Score          : {best['bic']:.4e}  <-- MAIN RANKING METRIC")
-            print(f"  Reduced Chi-Square : {best['error']:.4f}")
-            print("  --- Parameters ---")
-            for param, val in best['params'].items():
-                print(f"     {param}: {val:.4e}")
-
-        # ==========================================
-        # 6. PLOT THE WINNER (3-PANEL LAYOUT)
-        # ==========================================
-        for i in range(min(3, len(successful_fits))):
-            best = successful_fits[i]
-            print(f"\nGenerating plot for #{i+1}: {best['circuit']} with reduced chi-square {best['error']:.4f}")
-            if len(successful_fits) > 0:
-                import matplotlib.pyplot as plt
-                from matplotlib.gridspec import GridSpec
-
-                # 1. Extract the absolute best fit
-                best = successful_fits[i]
-                best_circuit = best['circuit']
-                
-                # 2. Rebuild the math model for this specific string
-                Z_model, comp_names = build_circuit_function(best_circuit)
-                
-                # Pull out the optimized parameters in the exact order the model expects
-                popt = [best['params'][comp] for comp in comp_names]
-                
-                # 3. Generate the fitted curves
-                Z_fit_stacked = Z_model(f_stacked, *popt)
-                
-                # Unstack to complex numbers
-                Z_fit_real = Z_fit_stacked[:len(f)]
-                Z_fit_imag = Z_fit_stacked[len(f):]
-                Z_fit = Z_fit_real + 1j * Z_fit_imag
-                
-                # 4. Set up the 3-Panel Layout
-                # figsize=(12, 5) and GridSpec(2, 3) gives the 1/3 to 2/3 ratio perfectly
-                fig = plt.figure(figsize=(12, 5))
-                gs = GridSpec(2, 3, figure=fig)
-                
-                ax_real = fig.add_subplot(gs[0, 0])          # Top Left
-                ax_imag = fig.add_subplot(gs[1, 0], sharex=ax_real) # Bottom Left
-                ax_nyq = fig.add_subplot(gs[:, 1:])          # Entire Right Side (columns 1 & 2)
-                
-                # --- PANEL 1: Real vs Frequency ---
-                ax_real.semilogx(f, Z.real, 'o', color='black', markersize=5, mfc='none', label='Data')
-                ax_real.semilogx(f, Z_fit.real, '-', color='red', linewidth=2, label='Fit')
-                ax_real.set_ylabel(r"Re(Z) [$\Omega$]")
-                ax_real.grid(True, which='both', ls='--', alpha=0.5)
-                ax_real.legend(loc='best')
-                plt.setp(ax_real.get_xticklabels(), visible=False) # Hide x-labels for the top plot
-                
-                # --- PANEL 2: Imaginary vs Frequency ---
-                # Note: Standard EIS plots -Im(Z) on the Y axis
-                ax_imag.semilogx(f, -Z.imag, 'o', color='black', markersize=5, mfc='none')
-                ax_imag.semilogx(f, -Z_fit.imag, '-', color='red', linewidth=2)
-                ax_imag.set_xlabel("Frequency [Hz]")
-                ax_imag.set_ylabel(r"-Im(Z) [$\Omega$]")
-                ax_imag.grid(True, which='both', ls='--', alpha=0.5)
-                
-                # --- PANEL 3: Nyquist Plot ---
-                ax_nyq.plot(Z.real, -Z.imag, 'o', color='black', markersize=6, mfc='none', label='Data')
-                ax_nyq.plot(Z_fit.real, -Z_fit.imag, '-', color='red', linewidth=2, label='Fit')
-                
-                # Force the aspect ratio to be exactly 1:1 so semicircles don't look like ovals
-                ax_nyq.set_aspect('equal', adjustable='datalim') 
-                
-                ax_nyq.set_title(f"Best Fit Topology: {best_circuit}", fontweight='bold')
-                ax_nyq.set_xlabel(r"Re(Z) [$\Omega$]")
-                ax_nyq.set_ylabel(r"-Im(Z) [$\Omega$]")
-                ax_nyq.grid(True, ls='--', alpha=0.5)
-                ax_nyq.legend(loc='best')
-                
-                plt.tight_layout()
-                plt.show()
+    tf = time.time()
+    print(f"\nSweep completed in {tf - t0:.2f} seconds.")
+    
+    # Sort strictly by the BIC score
+    successful_fits = [r for r in results if r['status'] == 'success']
+    successful_fits.sort(key=lambda x: x['bic'])
+    
+    print(f"\n--- TOP 3 CIRCUITS OUT OF {len(successful_fits)} SUCCESSFUL FITS ---")
+    for i in range(min(3, len(successful_fits))):
+        best = successful_fits[i]
+        print(f"\n#{i+1}: {best['circuit']}")
+        print(f"  Components (k)     : {best['k_params']}")
+        print(f"  BIC Score          : {best['bic']:.4e}")
+        print(f"  Reduced Chi-Square : {best['error']:.4f}")
+        for param, val in best['params'].items():
+            print(f"     {param}: {val:.4e}")
+# %%
