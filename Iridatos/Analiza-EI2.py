@@ -483,10 +483,19 @@ def test_manual_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked):
     
     plt.tight_layout()
     plt.show()
+<<<<<<< Updated upstream
 
 #%%
 dire = 'E:/trabajo/phd/phd/Iridatos'
 dire = '/home/martin/LBT/phd/Iridatos'
+=======
+#%%
+# Ajustador automatico
+# ==========================================
+# DATA LOADING & EXECUTION (No __main__ shield needed!)
+# ==========================================
+dire = 'E:/trabajo/phd/phd/Iridatos'
+>>>>>>> Stashed changes
 data = np.genfromtxt(f'{dire}/EI/2X3_1234_100mVac_T290.00K_1635_Offset_0.00_mV.txt', unpack=True, delimiter=',', skip_header=1)
 
 l = 500
@@ -505,6 +514,7 @@ f_stacked = np.hstack([f, f])
 Z_stacked = np.hstack([Z.real, Z.imag])
 sigma_stacked = np.hstack([sigma_real, sigma_imag])
 
+<<<<<<< Updated upstream
 # (Assuming your f, Z, and sigma arrays are already loaded and stacked)
 
 RUN_FIXED_SIMULATION = True
@@ -530,6 +540,12 @@ else:
 #%%
 if RUN_MANUAL_TEST:
     target_circuit = 'p(L1,R1)-p(L2,C1-R2)-p(R3,C2-R4)'
+=======
+RUN_MANUAL_TEST = False 
+
+if RUN_MANUAL_TEST:
+    target_circuit = 'C1-p(C2,R1)-p(L1,C3-R2,L2-R3)'
+>>>>>>> Stashed changes
     test_manual_circuit(target_circuit, f_stacked, Z_stacked, sigma_stacked)
     
 else:
@@ -578,5 +594,9 @@ else:
         print(f"  BIC Score          : {best['bic']:.4e}")
         print(f"  Reduced Chi-Square : {best['error']:.4f}")
         for param, val in best['params'].items():
+<<<<<<< Updated upstream
             print(f"     {param}: {val:.4e}")
 # %%
+=======
+            print(f"     {param}: {val:.4e}")
+>>>>>>> Stashed changes
