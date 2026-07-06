@@ -115,11 +115,7 @@ class IVMeasurementApp(QMainWindow):
         iv_layout = QVBoxLayout()
         self.iv_plot = pg.PlotWidget(title="Voltaje vs Corriente")
         self._style_plot(self.iv_plot, "Voltaje (V)", "Corriente (mA)")
-        self.iv_plot.addLegend()
-        self.iv_curve = self.iv_plot.plot(symbol='o', width=1,
-                                           symbolSize=6, symbolBrush=pg.mkBrush('#0055ff'), name="Canal 1")
-        self.iv_curve_ch2 = self.iv_plot.plot(symbol='s', width=1,
-                                               symbolSize=6, symbolBrush=pg.mkBrush('#ff5500'), name="Canal 2")
+        self.iv_curve = self.iv_plot.plot(pen=None, symbol='o', symbolSize=6, symbolBrush=pg.mkBrush('#0055ff')) 
         iv_layout.addWidget(self.iv_plot)
         self.iv_plot_pane.setLayout(iv_layout)
         bottom_row_layout.addWidget(self.iv_plot_pane)
@@ -129,17 +125,12 @@ class IVMeasurementApp(QMainWindow):
         res_layout = QVBoxLayout()
         self.res_plot = pg.PlotWidget(title="Resistencia vs Corriente")
         self._style_plot(self.res_plot, "Corriente (mA)", "Resistencia (Ω)")
-        self.res_plot.addLegend()
         
-        # Curvas para canal 1 y canal 2
+        # New dual curves
         self.rinst_curve = self.res_plot.plot(pen=pg.mkPen(color='#0055ff', width=1), 
-                                              symbol='o', symbolSize=5, symbolBrush='#0055ff', name="Rinst Ch1")
-        self.rinst_curve_ch2 = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1), 
-                                                  symbol='s', symbolSize=5, symbolBrush='#ff5500', name="Rinst Ch2")
-        self.rrem_curve = self.res_plot.plot(pen=pg.mkPen(color='#0055ff', width=1, style=Qt.PenStyle.DashLine), 
-                                             symbol='o', symbolSize=5, symbolBrush='#0055ff', name="Rrem Ch1")
-        self.rrem_curve_ch2 = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1, style=Qt.PenStyle.DashLine), 
-                                                 symbol='s', symbolSize=5, symbolBrush='#ff5500', name="Rrem Ch2")
+                                              symbol='o', symbolSize=5, symbolBrush='#0055ff')
+        self.rrem_curve = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1), 
+                                             symbol='s', symbolSize=5, symbolBrush='#ff5500')
         res_layout.addWidget(self.res_plot)
         self.res_plot_pane.setLayout(res_layout)
         bottom_row_layout.addWidget(self.res_plot_pane)
@@ -149,9 +140,7 @@ class IVMeasurementApp(QMainWindow):
         vt_layout = QVBoxLayout()
         self.vt_plot = pg.PlotWidget(title="Voltaje vs Tiempo")
         self._style_plot(self.vt_plot, "Tiempo (min)", "Voltaje (V)")
-        self.vt_plot.addLegend()
-        self.vt_curve = self.vt_plot.plot(pen=pg.mkPen(color='#00aa00', width=2), name="Canal 1")
-        self.vt_curve_ch2 = self.vt_plot.plot(pen=pg.mkPen(color='#ff5500', width=2), name="Canal 2")
+        self.vt_curve = self.vt_plot.plot(pen=pg.mkPen(color='#00aa00', width=2))
         vt_layout.addWidget(self.vt_plot)
         self.vt_plot_pane.setLayout(vt_layout)
         bottom_row_layout.addWidget(self.vt_plot_pane)
@@ -196,19 +185,12 @@ class IVMeasurementApp(QMainWindow):
         self.data_t = []
         self.data_v = []
         self.data_i = []
-        self.data_t_ch2 = []
-        self.data_v_ch2 = []
-        self.data_i_ch2 = []
         
         # Reset de las listas de datos
         self.data_i_rinst = []
         self.data_rinst = []
         self.data_i_rrem = []
         self.data_rrem = []
-        self.data_i_rinst_ch2 = []
-        self.data_rinst_ch2 = []
-        self.data_i_rrem_ch2 = []
-        self.data_rrem_ch2 = []
 
     # ==========================================
     # LÓGICA DE CONTROL (SLOTS)
@@ -353,54 +335,36 @@ class IVMeasurementApp(QMainWindow):
             i_pane.ip_1_ro.setText(f"{i_app:.5f}")
             i_pane.vp_1_ro.setText(safe_format(v1))
             i_pane.rinst_1_ro.setText(safe_format(r1))
-            i_pane.ip_2_ro.setText(f"{i_app:.5f}")
-            i_pane.vp_2_ro.setText(safe_format(v2))
-            i_pane.rinst_2_ro.setText(safe_format(r2))
         else:
             i_pane.ib_1_ro.setText(f"{i_app:.5f}")
             i_pane.vb_1_ro.setText(safe_format(v1))
             i_pane.rrem_1_ro.setText(safe_format(r1))
-            i_pane.ib_2_ro.setText(f"{i_app:.5f}")
-            i_pane.vb_2_ro.setText(safe_format(v2))
-            i_pane.rrem_2_ro.setText(safe_format(r2))
 
         # 2. Update Plots
         if not es_bias:
+            # Update Pulse Data (I-V and V-T)
             self.data_t.append(t_min)
             self.data_v.append(v1)
             self.data_i.append(i_app)
-            self.iv_curve.setData(self.data_v, self.data_i)
-            self.vt_curve.setData(self.data_t, self.data_v)
-
+            
             self.i_inst = i_app
 
+            self.iv_curve.setData(self.data_v, self.data_i)
+            self.vt_curve.setData(self.data_t, self.data_v)
+            
+            # Update Rinst Curve
             if not math.isnan(r1):
                 self.data_i_rinst.append(i_app)
                 self.data_rinst.append(r1)
                 self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
-
-            if not math.isnan(v2):
-                self.data_t_ch2.append(t_min)
-                self.data_v_ch2.append(v2)
-                self.data_i_ch2.append(i_app)
-                self.iv_curve_ch2.setData(self.data_v_ch2, self.data_i_ch2)
-                self.vt_curve_ch2.setData(self.data_t_ch2, self.data_v_ch2)
-
-            if not math.isnan(r2):
-                self.data_i_rinst_ch2.append(i_app)
-                self.data_rinst_ch2.append(r2)
-                self.rinst_curve_ch2.setData(self.data_i_rinst_ch2, self.data_rinst_ch2)
             
         else:
+            # Update Rrem Curve vs Current
+            # Note: We use i_app (which is corr_bias) for the X-axis
             if not math.isnan(r1):
                 self.data_i_rrem.append(self.i_inst)
                 self.data_rrem.append(r1)
                 self.rrem_curve.setData(self.data_i_rrem, self.data_rrem)
-
-            if not math.isnan(r2):
-                self.data_i_rrem_ch2.append(self.i_inst)
-                self.data_rrem_ch2.append(r2)
-                self.rrem_curve_ch2.setData(self.data_i_rrem_ch2, self.data_rrem_ch2)
 
 
 if __name__ == "__main__":

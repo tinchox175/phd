@@ -1,3 +1,4 @@
+#%%
 import pyvisa
 import time
 import numpy as np
@@ -7,8 +8,8 @@ import matplotlib.pyplot as plt
 # ==========================================
 # 1. PARAMETERS & GPIB ADDRESSES
 # ==========================================
-K224_ADDR = "GPIB0::22::INSTR"    # Keithley 224 Current Source
-A34420A_ADDR = "GPIB0::21::INSTR" # Agilent 34420A Nanovoltmeter
+K224_ADDR = "GPIB0::02::INSTR"    # Keithley 224 Current Source
+A34420A_ADDR = "GPIB0::07::INSTR" # Agilent 34420A Nanovoltmeter
 
 START_I = -1e-3  # Starting current in Amps (-1 mA)
 STOP_I = 1e-3    # Stopping current in Amps (1 mA)
@@ -29,7 +30,7 @@ meter.write("CONF:VOLT:DC")
 # Keithley 224 (Pre-SCPI syntax requires 'X' as an execute command)
 source.write("F0X")   # F0 = Output OFF (Standby)
 source.write("V10X")  # V10 = Set voltage compliance limit to 10V (adjust as needed)
-
+#%%
 # ==========================================
 # 3. EXECUTE SWEEP
 # ==========================================
@@ -88,6 +89,7 @@ plt.show()
 # ==========================================
 # 5. CLEAN UP
 # ==========================================
+#%%
 source.close()
 meter.close()
 rm.close()
