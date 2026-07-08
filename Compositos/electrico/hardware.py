@@ -52,7 +52,6 @@ class Agilent34420A:
     def conectar(self, rm):
         self.inst = rm.open_resource(self.direccion)
         self.inst.timeout = 5000 
-        self.inst.write("CONF:VOLT:DC")
         
         # Limpiar cache al conectar
         self.ultimo_nplc = None
