@@ -203,6 +203,9 @@ class HiloMedicionDual(QThread):
                 # FASE A: PULSO PRINCIPAL
                 # ====================================================
                 if not self.pausado_cbias:
+                    if abs(corriente_objetivo) < 1e-5:
+                        corriente_objetivo = 1e-5 if corriente_objetivo >= 0 else -1e-5
+
                     self.fuente.set_limite_voltaje(self.estado['limite_voltaje'])
                     self.fuente.set_corriente(corriente_objetivo)
                     
@@ -251,6 +254,10 @@ class HiloMedicionDual(QThread):
                     for _ in range(num_bias):
                         if not self.corriendo or self.pausado_sbias: break
                         
+                        corr_bias_actual = self.estado['corr_bias']
+                        if abs(corr_bias_actual) < 1e-5:
+                            corr_bias_actual = 1e-5 if corr_bias_actual >= 0 else -1e-5
+
                         self.fuente.set_corriente(self.estado['corr_bias'])
                         self.fuente.operar()
                         time.sleep(espera_pulso)

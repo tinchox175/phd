@@ -1,5 +1,7 @@
 import sys
 import math
+import csv
+import os
 from PySide6.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayout, 
                                QWidget, QLabel, QGroupBox, QPushButton, QTabWidget, 
                                QLineEdit, QMessageBox, QStatusBar, QFileDialog)
@@ -55,6 +57,9 @@ class IVMeasurementApp(QMainWindow):
         # Diccionario de estado compartido con el Worker
         self.estado_compartido = {}
         
+        # Variable para almacenar la ruta por defecto de guardado/carga
+        self.directorio_defecto = ""
+
         # Inicializar el hilo de hardware
         self.worker = HiloMedicionDual(self.estado_compartido)
         
@@ -72,16 +77,30 @@ class IVMeasurementApp(QMainWindow):
         # Menú Archivo
         archivo_menu = menu_bar.addMenu("Archivo")
         
-        self.action_abrir = QAction("Abrir Mediciones Anteriores...", self)
-        self.action_abrir.triggered.connect(lambda: print("Abrir presionado (Pendiente)"))
+        self.action_abrir = QAction("Cargar...", self)
+        self.action_abrir.triggered.connect(self._cargar_medicion) # <-- Conectado aquí
         archivo_menu.addAction(self.action_abrir)
         
         # Menú Opciones
         opciones_menu = menu_bar.addMenu("Opciones")
         
         self.action_configurar_ruta = QAction("Configurar Ruta por Defecto...", self)
-        self.action_configurar_ruta.triggered.connect(lambda: print("Configurar Ruta presionado (Pendiente)"))
+        self.action_configurar_ruta.triggered.connect(self._configurar_ruta_defecto) # <-- Actualizado
         opciones_menu.addAction(self.action_configurar_ruta)
+
+    def _configurar_ruta_defecto(self):
+            """Abre un diálogo para seleccionar la carpeta por defecto para guardar archivos."""
+            directorio = QFileDialog.getExistingDirectory(
+                self,
+                "Seleccionar Carpeta por Defecto",
+                self.directorio_defecto,
+                QFileDialog.Option.ShowDirsOnly
+            )
+            
+            if directorio:
+                self.directorio_defecto = directorio
+                self.status_bar.setStyleSheet("color: #0055ff; font-weight: bold;")
+                self.status_bar.showMessage(f"Ruta por defecto configurada: {self.directorio_defecto}", 5000)
 
     def _setup_ui(self):
         central_widget = QWidget()
@@ -120,6 +139,8 @@ class IVMeasurementApp(QMainWindow):
                                            symbolSize=6, symbolBrush=pg.mkBrush('#0055ff'), name="Canal 1")
         self.iv_curve_ch2 = self.iv_plot.plot(symbol='s', width=1,
                                                symbolSize=6, symbolBrush=pg.mkBrush('#ff5500'), name="Canal 2")
+        self.iv_last = self.iv_plot.plot(pen=None, symbol='o', symbolSize=10, symbolBrush='g', symbolPen='k')
+        self.iv_last_ch2 = self.iv_plot.plot(pen=None, symbol='s', symbolSize=10, symbolBrush='g', symbolPen='k')
         iv_layout.addWidget(self.iv_plot)
         self.iv_plot_pane.setLayout(iv_layout)
         bottom_row_layout.addWidget(self.iv_plot_pane)
@@ -140,6 +161,11 @@ class IVMeasurementApp(QMainWindow):
                                              symbol='o', symbolSize=5, symbolBrush='#0055ff', name="Rrem Ch1")
         self.rrem_curve_ch2 = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1, style=Qt.PenStyle.DashLine), 
                                                  symbol='s', symbolSize=5, symbolBrush='#ff5500', name="Rrem Ch2")
+        self.rinst_last = self.res_plot.plot(pen=None, symbol='o', symbolSize=10, symbolBrush='r', symbolPen='k')
+        self.rinst_last_ch2 = self.res_plot.plot(pen=None, symbol='s', symbolSize=10, symbolBrush='r', symbolPen='k')
+        
+        self.rrem_last = self.res_plot.plot(pen=None, symbol='o', symbolSize=10, symbolBrush='r', symbolPen='k')
+        self.rrem_last_ch2 = self.res_plot.plot(pen=None, symbol='s', symbolSize=10, symbolBrush='r', symbolPen='k')
         res_layout.addWidget(self.res_plot)
         self.res_plot_pane.setLayout(res_layout)
         bottom_row_layout.addWidget(self.res_plot_pane)
@@ -270,11 +296,16 @@ class IVMeasurementApp(QMainWindow):
             self.status_bar.showMessage("La medición ya está en curso.", 3000)
             return
 
-        # 1. Solicitar ruta y nombre de archivo al usuario
+        # 1. Solicitar ruta y nombre de archivo al usuario, empezando en la ruta por defecto
+        ruta_inicial = self.directorio_defecto
+        if ruta_inicial:
+            # Sugerir un nombre base para ser aún más rápido
+            ruta_inicial = os.path.join(ruta_inicial, "medicion.csv")
+
         ruta_archivo, _ = QFileDialog.getSaveFileName(
             self,
             "Guardar Medición",
-            "", 
+            ruta_inicial, 
             "CSV Files (*.csv);;Todos los archivos (*)"
         )
 
@@ -292,14 +323,144 @@ class IVMeasurementApp(QMainWindow):
         # 4. Limpiar los gráficos correctamente
         self._limpiar_datos_graficos()
         self.iv_curve.setData([], [])
-        self.rinst_curve.setData([], []) # Changed from res_curve
-        self.rrem_curve.setData([], [])  # Added
+        self.iv_curve_ch2.setData([], [])
+        self.rinst_curve.setData([], [])
+        self.rinst_curve_ch2.setData([], [])
+        self.rrem_curve.setData([], [])
+        self.rrem_curve_ch2.setData([], [])
         self.vt_curve.setData([], [])
+        self.vt_curve_ch2.setData([], [])
+        
+        # Limpiar los puntos rojos de ambos canales
+        self.iv_last.setData([], [])
+        self.iv_last_ch2.setData([], [])
+        self.rinst_last.setData([], [])
+        self.rinst_last_ch2.setData([], [])
+        self.rrem_last.setData([], [])
+        self.rrem_last_ch2.setData([], [])
 
         # 5. Arrancar el motor
         self.status_bar.setStyleSheet("") # Resetear color en caso de error previo
         self.status_bar.showMessage(f"Iniciando medición... Guardando en {ruta_archivo}")
         self.worker.iniciar_medicion()
+
+    def _cargar_medicion(self):
+        """Abre un diálogo, lee un CSV previo y puebla los gráficos soportando múltiples formatos."""
+        if self.worker.corriendo:
+            self.status_bar.showMessage("No se puede cargar un archivo mientras se está midiendo.", 4000)
+            return
+
+        ruta_archivo, _ = QFileDialog.getOpenFileName(
+            self,
+            "Cargar Medición",
+            self.directorio_defecto, 
+            "CSV Files (*.csv);;Todos los archivos (*)"
+        )
+
+        if not ruta_archivo:
+            return
+
+        try:
+            self._limpiar_datos_graficos()
+            
+            with open(ruta_archivo, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                
+                for fila in reader:
+                    try:
+                        t = float(fila.get("Tiempo (min)", float('nan')))
+                        is_smu = False # NUEVO: Bandera para identificar el archivo
+                        
+                        # ---------------------------------------------------------
+                        # DETECCIÓN DE FORMATO (Nuevo vs SMU Viejo)
+                        # ---------------------------------------------------------
+                        if "I pulso (mA)" in fila:
+                            # FORMATO NUEVO (K224 + 34420A)
+                            i_inst = float(fila["I pulso (mA)"])
+                            r1_inst = float(fila["Rinst 1 (Ohm)"])
+                            r2_inst = float(fila.get("Rinst 2 (Ohm)", float('nan')))
+                            
+                        elif "I pulso(mA)" in fila:
+                            # FORMATO VIEJO (B2902A SMU)
+                            is_smu = True # Activamos la bandera
+                            i_inst = float(fila["Iinst 1 (mA)"]) 
+                            r1_inst = float(fila["Rinst 1(Ohm)"])
+                            r2_inst = float(fila.get("Rinst 2(Ohm)", float('nan')))
+                            
+                        else:
+                            # Fila irreconocible
+                            continue
+
+                        # Columnas compartidas
+                        v1_inst = float(fila.get("Vinst 1 (V)", float('nan')))
+                        r1_bias = float(fila.get("Rrem 1 (Ohm)", float('nan')))
+                        v2_inst = float(fila.get("Vinst 2 (V)", float('nan')))
+                        r2_bias = float(fila.get("Rrem 2 (Ohm)", float('nan')))
+                        
+                        # ---------------------------------------------------------
+                        # NUEVO: FILTRO DE BASURA (Solo para archivos SMU)
+                        # Si el valor absoluto supera 1e30, lo convertimos en NaN
+                        # ---------------------------------------------------------
+                        if is_smu:
+                            if abs(v2_inst) > 1e30: v2_inst = float('nan')
+                            if abs(r2_inst) > 1e30: r2_inst = float('nan')
+                            if abs(r2_bias) > 1e30: r2_bias = float('nan')
+                            
+                    except ValueError:
+                        continue # Ignorar si hay texto corrupto
+                    
+                    # Poblar datos del pulso principal
+                    if not math.isnan(t) and not math.isnan(i_inst):
+                        self.data_t.append(t)
+                        self.data_i.append(i_inst)
+                        self.data_v.append(v1_inst)
+                    
+                    if not math.isnan(r1_inst):
+                        self.data_i_rinst.append(i_inst)
+                        self.data_rinst.append(r1_inst)
+                    
+                    if not math.isnan(r1_bias):
+                        self.data_i_rrem.append(i_inst)
+                        self.data_rrem.append(r1_bias)
+                        
+                    # Poblar datos del Canal 2 si existen (y si no fueron limpiados por el filtro)
+                    if not math.isnan(v2_inst):
+                        self.data_t_ch2.append(t)
+                        self.data_v_ch2.append(v2_inst)
+                        self.data_i_ch2.append(i_inst)
+                        
+                    if not math.isnan(r2_inst):
+                        self.data_i_rinst_ch2.append(i_inst)
+                        self.data_rinst_ch2.append(r2_inst)
+                        
+                    if not math.isnan(r2_bias):
+                        self.data_i_rrem_ch2.append(i_inst)
+                        self.data_rrem_ch2.append(r2_bias)
+
+            # Actualizar todos los gráficos con los arrays completos
+            self.iv_curve.setData(self.data_v, self.data_i)
+            self.vt_curve.setData(self.data_t, self.data_v)
+            self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
+            self.rrem_curve.setData(self.data_i_rrem, self.data_rrem)
+            
+            self.iv_curve_ch2.setData(self.data_v_ch2, self.data_i_ch2)
+            self.vt_curve_ch2.setData(self.data_t_ch2, self.data_v_ch2)
+            self.rinst_curve_ch2.setData(self.data_i_rinst_ch2, self.data_rinst_ch2)
+            self.rrem_curve_ch2.setData(self.data_i_rrem_ch2, self.data_rrem_ch2)
+            
+            # Limpiar los puntos rojos de rastreo al cargar datos históricos
+            self.iv_last.setData([], [])
+            self.iv_last_ch2.setData([], [])
+            self.rinst_last.setData([], [])
+            self.rinst_last_ch2.setData([], [])
+            self.rrem_last.setData([], [])
+            self.rrem_last_ch2.setData([], [])
+            
+            self.status_bar.setStyleSheet("color: #2e7d32; font-weight: bold;")
+            self.status_bar.showMessage(f"Archivo cargado exitosamente: {ruta_archivo}", 5000)
+
+        except Exception as e:
+            self._mostrar_error(f"Error al leer el archivo: {str(e)}")
 
     def _detener_medicion(self):
         if not self.worker.corriendo: return 
@@ -371,13 +532,17 @@ class IVMeasurementApp(QMainWindow):
             self.data_i.append(i_app)
             self.iv_curve.setData(self.data_v, self.data_i)
             self.vt_curve.setData(self.data_t, self.data_v)
-
+            
+            # Punto rojo I-V Ch1
+            self.iv_last.setData([v1], [i_app])
             self.i_inst = i_app
 
             if not math.isnan(r1):
                 self.data_i_rinst.append(i_app)
                 self.data_rinst.append(r1)
                 self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
+                # Punto rojo Rinst Ch1
+                self.rinst_last.setData([i_app], [r1])
 
             if not math.isnan(v2):
                 self.data_t_ch2.append(t_min)
@@ -385,23 +550,30 @@ class IVMeasurementApp(QMainWindow):
                 self.data_i_ch2.append(i_app)
                 self.iv_curve_ch2.setData(self.data_v_ch2, self.data_i_ch2)
                 self.vt_curve_ch2.setData(self.data_t_ch2, self.data_v_ch2)
+                # Punto rojo I-V Ch2
+                self.iv_last_ch2.setData([v2], [i_app])
 
             if not math.isnan(r2):
                 self.data_i_rinst_ch2.append(i_app)
                 self.data_rinst_ch2.append(r2)
                 self.rinst_curve_ch2.setData(self.data_i_rinst_ch2, self.data_rinst_ch2)
+                # Punto rojo Rinst Ch2
+                self.rinst_last_ch2.setData([i_app], [r2])
             
         else:
             if not math.isnan(r1):
                 self.data_i_rrem.append(self.i_inst)
                 self.data_rrem.append(r1)
                 self.rrem_curve.setData(self.data_i_rrem, self.data_rrem)
+                # Punto rojo Rrem Ch1
+                self.rrem_last.setData([self.i_inst], [r1])
 
             if not math.isnan(r2):
                 self.data_i_rrem_ch2.append(self.i_inst)
                 self.data_rrem_ch2.append(r2)
                 self.rrem_curve_ch2.setData(self.data_i_rrem_ch2, self.data_rrem_ch2)
-
+                # Punto rojo Rrem Ch2
+                self.rrem_last_ch2.setData([self.i_inst], [r2])
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
