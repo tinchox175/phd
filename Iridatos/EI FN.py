@@ -194,20 +194,24 @@ def evaluate_circuit_agnostic(circuit_string, f_stacked, Z_stacked, sigma_stacke
     except Exception as e:
         return {'circuit': circuit_string, 'status': f'error: {str(e)}', 'error': np.inf}
 
-def test_fhn_hypothesis(circuit_string, forced_neg_resistor, f_stacked, Z_stacked, sigma_stacked):
-    """Forces a specific FHN resistor to be strictly negative."""
+def test_fhn_hypothesis(circuit_string, forced_neg_resistor, f_stacked, Z_stacked, sigma_stacked, p0_dict=None):
+    """Forces a specific FHN resistor to be strictly negative. Allows dynamic initial guesses for thermal chaining."""
     Z_model, comp_names = build_circuit_function(circuit_string)
     guesses, lows, highs = [], [], []
     
     for comp in comp_names:
         if comp == forced_neg_resistor:
-            guesses.append(-100.0); lows.append(-np.inf); highs.append(0.0)
+            guess = -100.0 if p0_dict is None else p0_dict[comp]
+            guesses.append(guess); lows.append(-np.inf); highs.append(0.0)
         elif comp.startswith('R'):
-            guesses.append(100.0); lows.append(0.0); highs.append(np.inf)
+            guess = 100.0 if p0_dict is None else p0_dict[comp]
+            guesses.append(guess); lows.append(0.0); highs.append(np.inf)
         elif comp.startswith('C'):
-            guesses.append(1e-5); lows.append(0.0); highs.append(0.1)
+            guess = 1e-5 if p0_dict is None else p0_dict[comp]
+            guesses.append(guess); lows.append(0.0); highs.append(0.1)
         elif comp.startswith('L'):
-            guesses.append(1); lows.append(0.0); highs.append(1000)
+            guess = 1.0 if p0_dict is None else p0_dict[comp]
+            guesses.append(guess); lows.append(0.0); highs.append(1000)
 
     try:
         popt, _ = curve_fit(Z_model, f_stacked, Z_stacked, p0=guesses, bounds=(lows, highs), sigma=sigma_stacked, absolute_sigma=True, maxfev=15000)
@@ -220,7 +224,6 @@ def test_fhn_hypothesis(circuit_string, forced_neg_resistor, f_stacked, Z_stacke
         }
     except Exception as e:
         return {'status': f'failed_to_converge: {str(e)}'}
-
 
 # =============================================================================
 # 4. VISUALIZATION & PLOTTING
@@ -281,38 +284,37 @@ def test_manual_circuit(circuit_string, f_stacked, Z_stacked, sigma_stacked):
 import os
 import glob
 
-def load_temperature_series(base_directory, noise_floor=0.02):
+def load_temperature_series(base_directory):
     """
     Scans a directory (and subdirectories) for EIS text files.
     Extracts the temperature from the filename and builds a dictionary of stacked datasets.
-    Assumes filenames contain a temperature string like 'T290.00K'.
     """
     thermal_data = {}
-    
-    # Search for all text files recursively in the base directory
     search_pattern = os.path.join(base_directory, '**', '*.txt')
     file_list = glob.glob(search_pattern, recursive=True)
     
     for filepath in file_list:
-        # Use regex to find the temperature in the filename (e.g., T290.00K)
         temp_match = re.search(r'T(\d+\.\d+)K', filepath)
         if not temp_match:
-            continue # Skip files that don't match the format
+            continue 
             
         temp_val = float(temp_match.group(1))
         
-        # Load the data
         try:
             data = np.genfromtxt(filepath, unpack=True, delimiter=',', skip_header=1)
-            l = min(500, len(data[0])) # Safeguard in case some files are shorter
+            l = min(500, len(data[0]))
+            
             f = data[0][0:l]
             Z = data[1][0:l] + 1j*data[3][0:l]
             
-            # Apply proportional error weighting
-            sigma_real = data[2][1:l]
-            sigma_imag = data[4][1:l]
+            # FIXED: Slice from [0:l] to match f and Z shapes
+            sigma_real = data[2][0:l]
+            sigma_imag = data[4][0:l]
             
-            # Stack the arrays
+            # Protect against exact 0.0 errors from the device
+            sigma_real = np.where(sigma_real <= 0, 1e-5, sigma_real)
+            sigma_imag = np.where(sigma_imag <= 0, 1e-5, sigma_imag)
+            
             f_stacked = np.hstack([f, f])
             Z_stacked = np.hstack([Z.real, Z.imag])
             sigma_stacked = np.hstack([sigma_real, sigma_imag])
@@ -322,26 +324,26 @@ def load_temperature_series(base_directory, noise_floor=0.02):
         except Exception as e:
             print(f"Skipped {filepath}: {e}")
             
-    # Sort the dictionary keys so we evaluate from highest to lowest temp (or vice versa)
+    # Sort strictly from Highest Temperature to Lowest Temperature (Cooling down)
     sorted_thermal_data = {k: thermal_data[k] for k in sorted(thermal_data.keys(), reverse=True)}
     print(f"Successfully loaded {len(sorted_thermal_data)} temperature datasets.")
     
     return sorted_thermal_data
-
+#%%
 # # =============================================================================
 # # 5. DATA LOADING
 # # =============================================================================
-# dire = r'E:\trabajo\tesis 3\tesisfisica\IVs\2011\ZdeW_1234_16-11-24'
-# data = np.genfromtxt(rf'{dire}/ZdeW_1234_Temperatura_280.79_K_0534/Offset_0.00_mV.txt', unpack=True, delimiter=',', skip_header=1)
+dire = r'/home/martin/LBT/tesisfisica/IVs/2011/ZdeW_1234_16-11-24/'
+data = np.genfromtxt(rf'{dire}/ZdeW_1234_Temperatura_280.79_K_0534/Offset_0.00_mV.txt', unpack=True, delimiter=',', skip_header=1)
 
-# l = 2000
-# f = data[0][1:l]
-# Z = data[1][1:l] + 1j*data[3][1:l]
+l = 2000
+f = data[0][1:l]
+Z = data[1][1:l] + 1j*data[3][1:l]
 
 
-# f_stacked = np.hstack([f, f])
-# Z_stacked = np.hstack([Z.real, Z.imag])
-# sigma_stacked = np.hstack([sigma_real, sigma_imag])
+f_stacked = np.hstack([f, f])
+Z_stacked = np.hstack([Z.real, Z.imag])
+sigma_stacked = np.hstack([sigma_real, sigma_imag])
 
 
 # =============================================================================
@@ -497,4 +499,82 @@ elif RUN_MODE == 'BLIND_SWEEP':
     for i in range(min(3, len(successful))):
         best = successful[i]
         print(f"\n#{i+1}: {best['circuit']}\nBIC: {best['bic']:.4e} | Chi2: {best['error']:.4f}")
+
+elif RUN_MODE == 'GLOBAL_CONSENSUS':
+    print("\nScanning directories for thermal data...")
+    base_dir = 'E:/trabajo/phd/phd/Iridatos/EI' 
+    thermal_data = load_temperature_series(base_dir)
+    
+    fhn_cases = generate_fhn_test_suite()
+    print(f"\nInitiating Global Consensus Sweep across {len(fhn_cases)} FHN topologies...")
+    
+    def global_worker(case):
+        c_string = case['circuit']
+        total_bic_type1, total_bic_type2 = 0, 0
+        failed_type1, failed_type2 = False, False
+        
+        # Variables to hold the chaining state
+        p0_t1, p0_t2 = None, None
+        history_t1, history_t2 = {}, {}
+        
+        for temp, (f_st, Z_st, sig_st) in thermal_data.items():
+            
+            # --- Type 1 Test ---
+            if not failed_type1:
+                res1 = test_fhn_hypothesis(c_string, case['fhn_parallel_R'], f_st, Z_st, sig_st, p0_dict=p0_t1)
+                if res1['status'] == 'success':
+                    total_bic_type1 += res1['bic']
+                    p0_t1 = res1['params']  # Pass parameters to the next temperature
+                    history_t1[temp] = res1['params']
+                else:
+                    failed_type1 = True
+                    total_bic_type1 = np.inf
+                    
+            # --- Type 2 Test ---
+            if not failed_type2:
+                res2 = test_fhn_hypothesis(c_string, case['fhn_series_R'], f_st, Z_st, sig_st, p0_dict=p0_t2)
+                if res2['status'] == 'success':
+                    total_bic_type2 += res2['bic']
+                    p0_t2 = res2['params']  # Pass parameters to the next temperature
+                    history_t2[temp] = res2['params']
+                else:
+                    failed_type2 = True
+                    total_bic_type2 = np.inf
+                    
+        results = []
+        if not failed_type1:
+            results.append({'circuit': c_string, 'type': 'Type 1', 'target': case['fhn_parallel_R'], 'global_bic': total_bic_type1, 'history': history_t1})
+        if not failed_type2:
+            results.append({'circuit': c_string, 'type': 'Type 2', 'target': case['fhn_series_R'], 'global_bic': total_bic_type2, 'history': history_t2})
+            
+        return results
+
+    global_results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        for res_list in executor.map(global_worker, fhn_cases):
+            global_results.extend(res_list)
+            
+    global_results.sort(key=lambda x: x['global_bic'])
+    
+    print(f"\n--- TOP 3 GLOBAL CONSENSUS TOPOLOGIES ---")
+    for i in range(min(3, len(global_results))):
+        best = global_results[i]
+        print(f"\n#{i+1}: {best['circuit']}  |  {best['type']} [{best['target']} < 0]")
+        print(f"  Total Cumulative BIC : {best['global_bic']:.4e}")
+        
+    # --- Print the Parameter Evolution for the #1 Winner ---
+    if global_results:
+        winner = global_results[0]
+        print(f"\n{'='*60}")
+        print(f" THERMAL PARAMETER EVOLUTION (Winner: {winner['circuit']})")
+        print(f"{'='*60}")
+        
+        comps = list(winner['history'][list(winner['history'].keys())[0]].keys())
+        header = f"{'Temp (K)':<10} | " + " | ".join([f"{c:<12}" for c in comps])
+        print(header)
+        print("-" * len(header))
+        
+        for temp, params in winner['history'].items():
+            row_str = f"{temp:<10.2f} | " + " | ".join([f"{params[c]:<12.4e}" for c in comps])
+            print(row_str)
 # %%
