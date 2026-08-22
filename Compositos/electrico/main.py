@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 import pyqtgraph as pg
 
 # Import the View (UI) and Model (Hardware)
-from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane
+from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, ParametrosRelajacionPane
 from hardware import HiloMedicionDual
 
 class SMUControlTab(QWidget):
@@ -47,6 +47,23 @@ class DualInstrumentControlTab(QWidget):
         main_layout.addLayout(panes_layout)
         self.setLayout(main_layout)
 
+class RelajacionTab(QWidget):
+    """Wrapper para la pestaña de prueba de Relajación (K224 + 34420A)."""
+    def __init__(self):
+        super().__init__()
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        panes_layout = QHBoxLayout()
+        self.params_pane = ParametrosRelajacionPane()
+        self.instant_pane = Lecturas34420APane() # Reutilizamos el panel del voltímetro
+        
+        panes_layout.addWidget(self.params_pane, alignment=Qt.AlignmentFlag.AlignTop)
+        panes_layout.addWidget(self.instant_pane, alignment=Qt.AlignmentFlag.AlignTop)
+        panes_layout.addStretch()
+        
+        main_layout.addLayout(panes_layout)
+        self.setLayout(main_layout)
 
 class IVMeasurementApp(QMainWindow):
     def __init__(self):
@@ -113,8 +130,10 @@ class IVMeasurementApp(QMainWindow):
         self.setup_tabs = QTabWidget()
         self.smu_tab = SMUControlTab()
         self.dual_inst_tab = DualInstrumentControlTab()
+        self.relajacion_tab = RelajacionTab() # <-- NUEVO
         
         self.setup_tabs.addTab(self.dual_inst_tab, "Setup: K224 + 34420A")
+        self.setup_tabs.addTab(self.relajacion_tab, "Relajación") # <-- NUEVO
         self.setup_tabs.addTab(self.smu_tab, "Setup: B2902A SMU")
         
         main_layout.addWidget(self.setup_tabs)
@@ -201,14 +220,21 @@ class IVMeasurementApp(QMainWindow):
         p_pane = self.dual_inst_tab.params_pane
         i_pane = self.dual_inst_tab.instant_pane 
         
-        # Botones UI -> Funciones del Controlador
+        # Botones UI -> Funciones del Controlador (Modo Triangular)
         p_pane.btn_aplicar.clicked.connect(self._sincronizar_parametros)
         p_pane.btn_medir.clicked.connect(self._iniciar_medicion)
         p_pane.btn_detencion.clicked.connect(self._detener_medicion)
         p_pane.btn_pausa_cbias.clicked.connect(self._toggle_pausa_cbias)
         p_pane.btn_pausa_sbias.clicked.connect(self._toggle_pausa_sbias)
 
+        # NUEVO: Botones UI -> Funciones del Controlador (Modo Relajación)
+        r_pane = self.relajacion_tab.params_pane
+        r_pane.btn_aplicar.clicked.connect(self._sincronizar_parametros)
+        r_pane.btn_medir.clicked.connect(self._iniciar_medicion)
+        r_pane.btn_detencion.clicked.connect(self._detener_medicion)
+
         # Señales del Worker -> Funciones del Controlador
+        self.worker.nueva_secuencia.connect(self._preparar_nueva_secuencia)
         self.worker.datos_actualizados.connect(self._actualizar_datos)
         self.worker.paso_invertido.connect(self._invertir_paso)
         self.worker.error_detectado.connect(self._mostrar_error)
@@ -217,6 +243,18 @@ class IVMeasurementApp(QMainWindow):
         p_pane.ancho_pulso.valueChanged.connect(self._validar_tiempos)
         i_pane.combo_nplc.currentTextChanged.connect(self._validar_tiempos)
         i_pane.btn_ch2_toggle.toggled.connect(self._validar_tiempos)
+
+        # NUEVO: Detectar cambio de pestaña para cambiar el eje del gráfico
+        self.setup_tabs.currentChanged.connect(self._al_cambiar_pestana)
+        
+
+    def _al_cambiar_pestana(self, index):
+        """Cambia dinámicamente el eje X del gráfico de resistencia según el modo."""
+        nombre_pestana = self.setup_tabs.tabText(index)
+        if nombre_pestana == "Relajación":
+            self.res_plot.setLabel('bottom', "Tiempo (min)")
+        elif "K224" in nombre_pestana:
+            self.res_plot.setLabel('bottom', "Corriente (mA)")
 
     def _limpiar_datos_graficos(self):
         self.data_t = []
@@ -229,12 +267,19 @@ class IVMeasurementApp(QMainWindow):
         # Reset de las listas de datos
         self.data_i_rinst = []
         self.data_rinst = []
+        self.data_t_rinst = [] # NUEVO Eje X de Tiempo
+
         self.data_i_rrem = []
         self.data_rrem = []
+        self.data_t_rrem = []  # NUEVO Eje X de Tiempo
+
         self.data_i_rinst_ch2 = []
         self.data_rinst_ch2 = []
+        self.data_t_rinst_ch2 = [] # NUEVO Eje X de Tiempo
+
         self.data_i_rrem_ch2 = []
         self.data_rrem_ch2 = []
+        self.data_t_rrem_ch2 = []  # NUEVO Eje X de Tiempo
 
     # ==========================================
     # LÓGICA DE CONTROL (SLOTS)
@@ -266,30 +311,59 @@ class IVMeasurementApp(QMainWindow):
             p_pane.lbl_warning_tiempo.setText(" ")
 
     def _sincronizar_parametros(self):
-        """Lee la UI y actualiza el diccionario del hilo de forma segura."""
-        p_pane = self.dual_inst_tab.params_pane
-        i_pane = self.dual_inst_tab.instant_pane
-
-        nuevo_estado = {
-            'ancho_pulso': p_pane.ancho_pulso.value(),
-            'corr_maxima': p_pane.corr_maxima.value(),
-            'corr_inicial': p_pane.corr_inicial.value(),
-            'num_mediciones_bias': p_pane.num_mediciones.value(),
-            'corr_bias': p_pane.corr_bias.value(),
-            'periodo_pulso': p_pane.periodo_pulso.value(),
-            'corr_minima': p_pane.corr_minima.value(),
-            'paso_corr': p_pane.paso_corr.value(),
-            'limite_voltaje': p_pane.limite_voltaje.value(),
-            'nplc': i_pane.combo_nplc.currentText(),
-            'rango': i_pane.combo_rango.currentText(),
-            'filtro': i_pane.combo_filtro.currentText(),
-            'ch2_activado': i_pane.btn_ch2_toggle.isChecked()
-        }
-        self.estado_compartido.update(nuevo_estado)
+        """Lee la UI activa y actualiza el diccionario del hilo de forma segura."""
+        nombre_pestana = self.setup_tabs.tabText(self.setup_tabs.currentIndex())
+        es_relajacion = (nombre_pestana == "Relajación")
         
-        # Limpiar el color rojo antes de mostrar el mensaje normal
+        if es_relajacion:
+            p_pane = self.relajacion_tab.params_pane
+            i_pane = self.relajacion_tab.instant_pane
+            
+            # Convertir el texto separado por comas a listas de Python
+            try:
+                lista_pulsos = [float(x.strip()) for x in p_pane.corr_pulso.text().split(',')]
+                lista_bias = [float(x.strip()) for x in p_pane.corr_bias.text().split(',')]
+            except ValueError:
+                self.status_bar.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold;")
+                self.status_bar.showMessage("ERROR: Las matrices deben contener solo números separados por comas.", 5000)
+                return
+                
+            nuevo_estado = {
+                'modo_relajacion': True,
+                'lista_pulsos': lista_pulsos,
+                'lista_bias': lista_bias,
+                'tiempo_pulso': p_pane.tiempo_pulso.value(),
+                'tiempo_descarga': p_pane.tiempo_descarga.value(),
+                'relajacion_pulsada': p_pane.btn_pulsado.isChecked(),
+                'periodo_relajacion': p_pane.periodo.value(),
+                'ancho_lectura': p_pane.ancho_lectura.value(),
+                'limite_voltaje': p_pane.limite_voltaje.value(),
+                'nplc': i_pane.combo_nplc.currentText(),
+                'rango': i_pane.combo_rango.currentText(),
+                'ch2_activado': i_pane.btn_ch2_toggle.isChecked()
+            }
+        else:
+            p_pane = self.dual_inst_tab.params_pane
+            i_pane = self.dual_inst_tab.instant_pane
+            nuevo_estado = {
+                'modo_relajacion': False,
+                'ancho_pulso': p_pane.ancho_pulso.value(),
+                'corr_maxima': p_pane.corr_maxima.value(),
+                'corr_inicial': p_pane.corr_inicial.value(),
+                'num_mediciones_bias': p_pane.num_mediciones.value(),
+                'corr_bias': p_pane.corr_bias.value(),
+                'periodo_pulso': p_pane.periodo_pulso.value(),
+                'corr_minima': p_pane.corr_minima.value(),
+                'paso_corr': p_pane.paso_corr.value(),
+                'limite_voltaje': p_pane.limite_voltaje.value(),
+                'nplc': i_pane.combo_nplc.currentText(),
+                'rango': i_pane.combo_rango.currentText(),
+                'ch2_activado': i_pane.btn_ch2_toggle.isChecked()
+            }
+            
+        self.estado_compartido.update(nuevo_estado)
         self.status_bar.setStyleSheet("") 
-        self.status_bar.showMessage("Parámetros actualizados y aplicados al hardware.", 3000)
+        self.status_bar.showMessage(f"Parámetros ({nombre_pestana}) actualizados.", 3000)
 
     def _iniciar_medicion(self):
         if self.worker.corriendo:
@@ -299,8 +373,10 @@ class IVMeasurementApp(QMainWindow):
         # 1. Solicitar ruta y nombre de archivo al usuario, empezando en la ruta por defecto
         ruta_inicial = self.directorio_defecto
         if ruta_inicial:
-            # Sugerir un nombre base para ser aún más rápido
-            ruta_inicial = os.path.join(ruta_inicial, "medicion.csv")
+            import time
+            # Generar un timestamp único (Ej: 20260821_163629)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            ruta_inicial = os.path.join(ruta_inicial, f"medicion_{timestamp}")
 
         ruta_archivo, _ = QFileDialog.getSaveFileName(
             self,
@@ -313,6 +389,10 @@ class IVMeasurementApp(QMainWindow):
         if not ruta_archivo:
             self.status_bar.showMessage("Medición cancelada (no se seleccionó archivo de destino).", 4000)
             return
+
+        # NUEVO: Asegurar que el archivo tenga la extensión .csv automáticamente
+        if not ruta_archivo.lower().endswith('.csv'):
+            ruta_archivo += '.csv'
 
         # 2. Asegurar que los últimos números tipeados estén cargados
         self._sincronizar_parametros()
@@ -343,6 +423,21 @@ class IVMeasurementApp(QMainWindow):
         self.status_bar.setStyleSheet("") # Resetear color en caso de error previo
         self.status_bar.showMessage(f"Iniciando medición... Guardando en {ruta_archivo}")
         self.worker.iniciar_medicion()
+
+    def _preparar_nueva_secuencia(self, corr_bias, corr_pulso, nombre_archivo):
+        """Limpia los gráficos antes de iniciar la siguiente combinación de la matriz."""
+        self._limpiar_datos_graficos()
+        self.iv_curve.setData([], [])
+        self.iv_curve_ch2.setData([], [])
+        self.rinst_curve.setData([], [])
+        self.rinst_curve_ch2.setData([], [])
+        self.rrem_curve.setData([], [])
+        self.rrem_curve_ch2.setData([], [])
+        self.vt_curve.setData([], [])
+        self.vt_curve_ch2.setData([], [])
+        self.status_bar.setStyleSheet("")
+        import os
+        self.status_bar.showMessage(f"Matriz: Bias {corr_bias}mA | Pulso {corr_pulso}mA -> Guardando en {os.path.basename(nombre_archivo)}")
 
     def _cargar_medicion(self):
         """Abre un diálogo, lee un CSV previo y puebla los gráficos soportando múltiples formatos."""
@@ -526,6 +621,8 @@ class IVMeasurementApp(QMainWindow):
             i_pane.rrem_2_ro.setText(safe_format(r2))
 
         # 2. Update Plots
+        es_relajacion = self.estado_compartido.get('modo_relajacion', False)
+
         if not es_bias:
             self.data_t.append(t_min)
             self.data_v.append(v1)
@@ -533,16 +630,18 @@ class IVMeasurementApp(QMainWindow):
             self.iv_curve.setData(self.data_v, self.data_i)
             self.vt_curve.setData(self.data_t, self.data_v)
             
-            # Punto rojo I-V Ch1
             self.iv_last.setData([v1], [i_app])
-            self.i_inst = i_app
+            self.i_inst = i_app # Guardamos para alinear el Rrem si aplica
 
             if not math.isnan(r1):
                 self.data_i_rinst.append(i_app)
+                self.data_t_rinst.append(t_min)
                 self.data_rinst.append(r1)
-                self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
-                # Punto rojo Rinst Ch1
-                self.rinst_last.setData([i_app], [r1])
+                
+                # Elegir Eje X dinámico
+                x_data = self.data_t_rinst if es_relajacion else self.data_i_rinst
+                self.rinst_curve.setData(x_data, self.data_rinst)
+                self.rinst_last.setData([x_data[-1]], [r1])
 
             if not math.isnan(v2):
                 self.data_t_ch2.append(t_min)
@@ -550,30 +649,36 @@ class IVMeasurementApp(QMainWindow):
                 self.data_i_ch2.append(i_app)
                 self.iv_curve_ch2.setData(self.data_v_ch2, self.data_i_ch2)
                 self.vt_curve_ch2.setData(self.data_t_ch2, self.data_v_ch2)
-                # Punto rojo I-V Ch2
                 self.iv_last_ch2.setData([v2], [i_app])
 
             if not math.isnan(r2):
                 self.data_i_rinst_ch2.append(i_app)
+                self.data_t_rinst_ch2.append(t_min)
                 self.data_rinst_ch2.append(r2)
-                self.rinst_curve_ch2.setData(self.data_i_rinst_ch2, self.data_rinst_ch2)
-                # Punto rojo Rinst Ch2
-                self.rinst_last_ch2.setData([i_app], [r2])
+                
+                x_data_ch2 = self.data_t_rinst_ch2 if es_relajacion else self.data_i_rinst_ch2
+                self.rinst_curve_ch2.setData(x_data_ch2, self.data_rinst_ch2)
+                self.rinst_last_ch2.setData([x_data_ch2[-1]], [r2])
             
         else:
             if not math.isnan(r1):
-                self.data_i_rrem.append(self.i_inst)
+                self.data_i_rrem.append(self.i_inst) # Corriente origen del pulso
+                self.data_t_rrem.append(t_min)
                 self.data_rrem.append(r1)
-                self.rrem_curve.setData(self.data_i_rrem, self.data_rrem)
-                # Punto rojo Rrem Ch1
-                self.rrem_last.setData([self.i_inst], [r1])
+                
+                # Elegir Eje X dinámico
+                x_data_bias = self.data_t_rrem if es_relajacion else self.data_i_rrem
+                self.rrem_curve.setData(x_data_bias, self.data_rrem)
+                self.rrem_last.setData([x_data_bias[-1]], [r1])
 
             if not math.isnan(r2):
                 self.data_i_rrem_ch2.append(self.i_inst)
+                self.data_t_rrem_ch2.append(t_min)
                 self.data_rrem_ch2.append(r2)
-                self.rrem_curve_ch2.setData(self.data_i_rrem_ch2, self.data_rrem_ch2)
-                # Punto rojo Rrem Ch2
-                self.rrem_last_ch2.setData([self.i_inst], [r2])
+                
+                x_data_bias_ch2 = self.data_t_rrem_ch2 if es_relajacion else self.data_i_rrem_ch2
+                self.rrem_curve_ch2.setData(x_data_bias_ch2, self.data_rrem_ch2)
+                self.rrem_last_ch2.setData([x_data_bias_ch2[-1]], [r2])
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

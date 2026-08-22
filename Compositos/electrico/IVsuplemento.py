@@ -22,15 +22,6 @@ class Lecturas34420APane(QGroupBox):
         # --- CH1 Controles Superiores ---
         ch1_top_layout = QHBoxLayout()
         
-        # Filtro
-        filtro_layout = QVBoxLayout()
-        filtro_layout.addWidget(QLabel("Filtro"))
-        self.combo_filtro = QComboBox()
-        self.combo_filtro.addItems(["OFF", "Analógico", "Digital", "Ambos"])
-        self.combo_filtro.setCurrentText("OFF") 
-        filtro_layout.addWidget(self.combo_filtro)
-        ch1_top_layout.addLayout(filtro_layout)
-
         # NPLC
         nplc_layout = QVBoxLayout()
         nplc_layout.addWidget(QLabel("NPLC"))
@@ -50,17 +41,6 @@ class Lecturas34420APane(QGroupBox):
         ch1_top_layout.addLayout(rango_layout)
 
         ch1_layout.addLayout(ch1_top_layout)
-
-        # Label de advertencia de Filtros
-        self.lbl_advertencia = QLabel(" ")
-        self.lbl_advertencia.setMinimumHeight(30)
-        self.lbl_advertencia.setWordWrap(True) 
-        self.lbl_advertencia.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 11px;")
-        ch1_layout.addWidget(self.lbl_advertencia)
-
-        # Conectamos los comboboxes a una función de validación interna de la UI
-        self.combo_filtro.currentTextChanged.connect(self._validar_filtros)
-        self.combo_rango.currentTextChanged.connect(self._validar_filtros)
 
         # --- CH1 Grilla de Lecturas ---
         grid1 = QGridLayout()
@@ -112,11 +92,6 @@ class Lecturas34420APane(QGroupBox):
         ch2_top_layout.addWidget(self.btn_ch2_toggle)
         ch2_layout.addLayout(ch2_top_layout)
 
-        # Espaciador invisible para igualar altura con el warning del Canal 1
-        spacer = QLabel(" ")
-        spacer.setMinimumHeight(30)
-        ch2_layout.addWidget(spacer)
-
         # --- CH2 Grilla de Lecturas ---
         grid2 = QGridLayout()
         grid2.setVerticalSpacing(5)
@@ -154,9 +129,29 @@ class Lecturas34420APane(QGroupBox):
         main_layout.addWidget(self.ch2_panel)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
-        # Inicializar Canal 2 como apagado
         self._on_ch2_toggle(False)
 
+    def _create_ro_display(self):
+        le = QLineEdit("0.00000") 
+        le.setReadOnly(True)
+        le.setStyleSheet("background-color: #f0f0f0; color: #333; font-weight: bold;")
+        le.setAlignment(Qt.AlignmentFlag.AlignRight)
+        return le
+
+    def _on_ch2_toggle(self, checked):
+        if checked:
+            self.btn_ch2_toggle.setText("CH 2: ENCENDIDO")
+            self.btn_ch2_toggle.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
+        else:
+            self.btn_ch2_toggle.setText("CH 2: APAGADO")
+            self.btn_ch2_toggle.setStyleSheet("background-color: #ffcccc; color: black; font-weight: bold;")
+            
+        widgets_to_toggle = [
+            self.ip_2_ro, self.vp_2_ro, self.rinst_2_ro,
+            self.ib_2_ro, self.vb_2_ro, self.rrem_2_ro
+        ]
+        for widget in widgets_to_toggle:
+            widget.setEnabled(checked)
 
     # ==========================================
     # MÉTODOS AUXILIARES
@@ -335,6 +330,106 @@ class ParametrosK224Pane(QGroupBox):
         self.setLayout(layout)
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
 
+
+class ParametrosRelajacionPane(QGroupBox):
+    def __init__(self):
+        super().__init__("Matriz de Relajación K224")
+        
+        layout = QGridLayout()
+        layout.setVerticalSpacing(5) 
+        layout.setHorizontalSpacing(8)
+        layout.setContentsMargins(5, 15, 5, 5)
+
+        # ==========================================
+        # FILA 1: Matrices de Corriente y Tiempos
+        # ==========================================
+        layout.addWidget(QLabel("Corrientes Pulso (mA)\n[Ej: 0.01, 0.02, -0.01]"), 0, 0)
+        self.corr_pulso = QLineEdit("0.010, 0.020, 0.030, -0.010, -0.020, -0.030")
+        self.corr_pulso.setStyleSheet("background-color: #ffffff; color: #000000;")
+        layout.addWidget(self.corr_pulso, 1, 0)
+
+        layout.addWidget(QLabel("Tiempo de Carga (s)"), 0, 1)
+        self.tiempo_pulso = QDoubleSpinBox()
+        self.tiempo_pulso.setDecimals(3)
+        self.tiempo_pulso.setRange(0.001, 10000.0)
+        self.tiempo_pulso.setValue(5.0)
+        layout.addWidget(self.tiempo_pulso, 1, 1)
+
+        layout.addWidget(QLabel("Corrientes Bias (mA)\n[Ej: 0.001, -0.001]"), 0, 2)
+        self.corr_bias = QLineEdit("0.001, -0.001, 0.002, -0.002")
+        self.corr_bias.setStyleSheet("background-color: #ffffff; color: #000000;")
+        layout.addWidget(self.corr_bias, 1, 2)
+
+        layout.addWidget(QLabel("Tiempo Relajación (s)"), 0, 3)
+        self.tiempo_descarga = QDoubleSpinBox()
+        self.tiempo_descarga.setRange(0.1, 100000.0)
+        self.tiempo_descarga.setValue(60.0)
+        layout.addWidget(self.tiempo_descarga, 1, 3)
+
+        # ==========================================
+        # FILA 2: Lógica de Lectura y Seguridad
+        # ==========================================
+        self.btn_pulsado = QPushButton("Modo: CONTINUO")
+        self.btn_pulsado.setCheckable(True)
+        self.btn_pulsado.setStyleSheet("background-color: #81d4fa; color: black; font-weight: bold;")
+        self.btn_pulsado.toggled.connect(self._on_pulsado_toggle)
+        layout.addWidget(self.btn_pulsado, 2, 0, 2, 1)
+
+        layout.addWidget(QLabel("Período Lectura (s)"), 2, 1)
+        self.periodo = QDoubleSpinBox()
+        self.periodo.setDecimals(3)
+        self.periodo.setRange(0.01, 10000.0)
+        self.periodo.setValue(1.0)
+        self.periodo.setEnabled(False)
+        layout.addWidget(self.periodo, 3, 1)
+
+        layout.addWidget(QLabel("Ancho Lectura (s)"), 2, 2)
+        self.ancho_lectura = QDoubleSpinBox()
+        self.ancho_lectura.setDecimals(3)
+        self.ancho_lectura.setRange(0.001, 100.0)
+        self.ancho_lectura.setValue(0.5)
+        self.ancho_lectura.setEnabled(False)
+        layout.addWidget(self.ancho_lectura, 3, 2)
+        
+        layout.addWidget(QLabel("Límite Voltaje (V)"), 2, 3)
+        self.limite_voltaje = QDoubleSpinBox()
+        self.limite_voltaje.setRange(0.0, 200.0)
+        self.limite_voltaje.setValue(20.0)
+        layout.addWidget(self.limite_voltaje, 3, 3)
+
+        layout.setRowMinimumHeight(4, 15)
+
+        # ==========================================
+        # FILA 3: Controles
+        # ==========================================
+        btn_layout = QHBoxLayout()
+        self.btn_medir = QPushButton("Iniciar Matriz")
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;") 
+        self.btn_detencion = QPushButton("Detención Global")
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;") 
+        self.btn_aplicar = QPushButton("Aplicar Cambios")
+        self.btn_aplicar.setStyleSheet("background-color: #fff3e0; color: black; font-weight: bold;")
+
+        for btn in [self.btn_medir, self.btn_aplicar, self.btn_detencion]:
+            btn.setMinimumHeight(35)
+            btn_layout.addWidget(btn)
+
+        layout.addLayout(btn_layout, 5, 0, 1, 4)
+        layout.setRowStretch(6, 1)
+        self.setLayout(layout)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+
+    def _on_pulsado_toggle(self, checked):
+        if checked:
+            self.btn_pulsado.setText("Modo: PULSADO")
+            self.btn_pulsado.setStyleSheet("background-color: #b39ddb; color: white; font-weight: bold;")
+            self.periodo.setEnabled(True)
+            self.ancho_lectura.setEnabled(True)
+        else:
+            self.btn_pulsado.setText("Modo: CONTINUO")
+            self.btn_pulsado.setStyleSheet("background-color: #81d4fa; color: black; font-weight: bold;")
+            self.periodo.setEnabled(False)
+            self.ancho_lectura.setEnabled(False)
 
 # ==============================================================================
 # LAS CLASES DEL SMU (B2902A) SE MANTIENEN INTACTAS DEBAJO DE ESTA LÍNEA
