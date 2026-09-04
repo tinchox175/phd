@@ -227,7 +227,7 @@ class IVMeasurementApp(QMainWindow):
         p_pane.btn_pausa_cbias.clicked.connect(self._toggle_pausa_cbias)
         p_pane.btn_pausa_sbias.clicked.connect(self._toggle_pausa_sbias)
 
-        # NUEVO: Botones UI -> Funciones del Controlador (Modo Relajación)
+        # Botones UI -> Funciones del Controlador (Modo Relajación)
         r_pane = self.relajacion_tab.params_pane
         r_pane.btn_aplicar.clicked.connect(self._sincronizar_parametros)
         r_pane.btn_medir.clicked.connect(self._iniciar_medicion)
@@ -239,12 +239,19 @@ class IVMeasurementApp(QMainWindow):
         self.worker.paso_invertido.connect(self._invertir_paso)
         self.worker.error_detectado.connect(self._mostrar_error)
 
-        # Validaciones en vivo (NPLC vs Ancho Pulso)
+        # AUTOMATIZACIÓN: Conectar validaciones inteligentes (Pestaña I-V)
         p_pane.ancho_pulso.valueChanged.connect(self._validar_tiempos)
         i_pane.combo_nplc.currentTextChanged.connect(self._validar_tiempos)
         i_pane.btn_ch2_toggle.toggled.connect(self._validar_tiempos)
 
-        # NUEVO: Detectar cambio de pestaña para cambiar el eje del gráfico
+        # AUTOMATIZACIÓN: Conectar validaciones inteligentes (Pestaña Relajación)
+        r_i_pane = self.relajacion_tab.instant_pane
+        r_pane.ancho_lectura.valueChanged.connect(self._validar_tiempos)
+        r_i_pane.combo_nplc.currentTextChanged.connect(self._validar_tiempos)
+        r_i_pane.btn_ch2_toggle.toggled.connect(self._validar_tiempos)
+
+        # Re-validar y ajustar gráficos al cambiar de pestaña
+        self.setup_tabs.currentChanged.connect(self._validar_tiempos)
         self.setup_tabs.currentChanged.connect(self._al_cambiar_pestana)
         
 
@@ -286,11 +293,25 @@ class IVMeasurementApp(QMainWindow):
     # ==========================================
 
     def _validar_tiempos(self, *args):
-        """Revisa si el Ancho de Pulso es suficiente para el NPLC seleccionado."""
-        p_pane = self.dual_inst_tab.params_pane
-        i_pane = self.dual_inst_tab.instant_pane
+        """Calcula el límite físico del hardware y ajusta la UI automáticamente para prevenir bloqueos."""
+        nombre_pestana = self.setup_tabs.tabText(self.setup_tabs.currentIndex())
+        es_relajacion = (nombre_pestana == "Relajación")
         
-        ancho = p_pane.ancho_pulso.value()
+        if es_relajacion:
+            p_pane = self.relajacion_tab.params_pane
+            i_pane = self.relajacion_tab.instant_pane
+            ancho_input = p_pane.ancho_lectura
+            periodo_input = p_pane.periodo
+            lbl_warning = p_pane.lbl_warning_tiempo
+        elif "K224" in nombre_pestana:
+            p_pane = self.dual_inst_tab.params_pane
+            i_pane = self.dual_inst_tab.instant_pane
+            ancho_input = p_pane.ancho_pulso
+            periodo_input = p_pane.periodo_pulso
+            lbl_warning = p_pane.lbl_warning_tiempo
+        else:
+            return # Ignorar si estamos en la pestaña del B2902A
+
         try:
             nplc = float(i_pane.combo_nplc.currentText())
         except ValueError:
@@ -298,17 +319,41 @@ class IVMeasurementApp(QMainWindow):
 
         usa_ch2 = i_pane.btn_ch2_toggle.isChecked()
         
-        # Cálculo del tiempo mínimo físico (Integración + Relay + Overhead)
-        multiplicador = 2 if usa_ch2 else 1
-        tiempo_integracion = (nplc * 0.02) * multiplicador
-        delay_relay = 0.015 if usa_ch2 else 0.0
-        overhead = 0.015 * multiplicador + delay_relay
-        tiempo_minimo = tiempo_integracion + overhead + 0.05 # 50ms margen seguridad
+        # Matemática dura de los límites del Agilent 34420A
+        tiempo_integracion = nplc * 0.02
         
-        if ancho < tiempo_minimo:
-            p_pane.lbl_warning_tiempo.setText(f"⚠ PELIGRO: Ancho de pulso ({ancho}s) es muy corto para NPLC {nplc}. Mínimo sugerido: {tiempo_minimo:.3f}s")
+        if usa_ch2:
+            # Integración CH1 + 1.5s relay (ida) + Integración CH2 + 1.5s relay (vuelta) + 100ms procesador
+            tiempo_minimo_ancho = (tiempo_integracion * 2) + 0.25 
         else:
-            p_pane.lbl_warning_tiempo.setText(" ")
+            # Solo CH1
+            tiempo_minimo_ancho = tiempo_integracion + 0.05 
+            
+        # El periodo SIEMPRE debe alojar el ancho + un descanso mínimo de 50ms para limpieza de buffer
+        tiempo_minimo_periodo = tiempo_minimo_ancho + 0.05 
+        
+        # Bloquear temporalmente las señales para evitar un bucle infinito en PyQt
+        ancho_input.blockSignals(True)
+        periodo_input.blockSignals(True)
+        
+        # AUTOMATIZACIÓN: Restringir los valores mínimos permitidos en las cajas de la interfaz
+        ancho_input.setMinimum(tiempo_minimo_ancho)
+        periodo_input.setMinimum(tiempo_minimo_periodo)
+        
+        # Si el usuario tenía puesto 0.5s y encendió el CH2, el valor salta automáticamente a ~3.15s
+        if ancho_input.value() < tiempo_minimo_ancho:
+            ancho_input.setValue(tiempo_minimo_ancho)
+        if periodo_input.value() < tiempo_minimo_periodo:
+            periodo_input.setValue(tiempo_minimo_periodo)
+            
+        ancho_input.blockSignals(False)
+        periodo_input.blockSignals(False)
+        
+        # Mensaje visual para informar por qué saltaron los números
+        if usa_ch2:
+            lbl_warning.setText(f"⚠ CH2 ACTIVO: Tiempos limitados por relays mecánicos (Mínimo {tiempo_minimo_periodo:.2f}s).")
+        else:
+            lbl_warning.setText(" ")
 
     def _sincronizar_parametros(self):
         """Lee la UI activa y actualiza el diccionario del hilo de forma segura."""

@@ -328,7 +328,8 @@ class ParametrosK224Pane(QGroupBox):
         layout.setRowStretch(6, 1)
         
         self.setLayout(layout)
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        # Cambiar Maximum por Expanding en AMBOS paneles
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
 
 class ParametrosRelajacionPane(QGroupBox):
@@ -391,13 +392,17 @@ class ParametrosRelajacionPane(QGroupBox):
         self.ancho_lectura.setEnabled(False)
         layout.addWidget(self.ancho_lectura, 3, 2)
         
+        # [Mantener el código anterior intacto hasta "Límite Voltaje"]
         layout.addWidget(QLabel("Límite Voltaje (V)"), 2, 3)
         self.limite_voltaje = QDoubleSpinBox()
         self.limite_voltaje.setRange(0.0, 200.0)
         self.limite_voltaje.setValue(20.0)
         layout.addWidget(self.limite_voltaje, 3, 3)
 
-        layout.setRowMinimumHeight(4, 15)
+        # NUEVO: Label de advertencia de tiempos (reemplaza el setRowMinimumHeight)
+        self.lbl_warning_tiempo = QLabel(" ")
+        self.lbl_warning_tiempo.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 11px;")
+        layout.addWidget(self.lbl_warning_tiempo, 4, 0, 1, 4)
 
         # ==========================================
         # FILA 3: Controles
@@ -417,7 +422,8 @@ class ParametrosRelajacionPane(QGroupBox):
         layout.addLayout(btn_layout, 5, 0, 1, 4)
         layout.setRowStretch(6, 1)
         self.setLayout(layout)
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        # Cambiar Maximum por Expanding en AMBOS paneles
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
     def _on_pulsado_toggle(self, checked):
         if checked:

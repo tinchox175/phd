@@ -46,38 +46,56 @@ class Agilent34420A:
         self.inst = None
         self.ultimo_nplc = None
         self.ultimo_rango = None
+        self.ultimo_canal = None  # <-- NUEVO CACHÉ
 
     def conectar(self, rm):
         self.inst = rm.open_resource(self.direccion)
         self.inst.timeout = 5000 
-        self.inst.write("*CLS") # LIMPIA MEMORIA DE ERRORES AL CONECTAR
+        self.inst.write("*CLS") 
         
         self.ultimo_nplc = None
         self.ultimo_rango = None
+        self.ultimo_canal = None  # <-- NUEVO CACHÉ
         print(f"34420A Conectado: {self.direccion}")
 
     def seleccionar_canal(self, canal):
-        if self.inst:
+        # SOLO enviamos el comando si el canal realmente cambia
+        if self.inst and canal != self.ultimo_canal:
             self.inst.write(f"ROUT:TERM FRON{canal}")
+            self.ultimo_canal = canal
 
-    def configurar_rapido(self, nplc, rango_str): # Quitamos el argumento filtro_str
+    def configurar_rapido(self, nplc, rango_str): 
         if not self.inst: return
         
+        # 1. Actualizar NPLC (Global, no requiere ruteo)
         if nplc != self.ultimo_nplc:
             self.inst.write(f"VOLT:DC:NPLC {nplc}")
             self.ultimo_nplc = nplc
 
+        # 2. Actualizar Rango (Específico por canal)
         if rango_str != self.ultimo_rango:
             diccionario_rangos = {
                 "Auto": "AUTO ON", "1 mV": "0.001", "10 mV": "0.01",
                 "100 mV": "0.1", "1 V": "1.0", "10 V": "10.0", "100 V": "100.0"
             }
             rango_val = diccionario_rangos.get(rango_str, "AUTO ON")
-            if rango_val == "AUTO ON":
-                self.inst.write("VOLT:DC:RANG:AUTO ON")
-            else:
-                self.inst.write(f"VOLT:DC:RANG {rango_val}")
+
+            for c in [1, 2]:
+                self.inst.write(f"ROUT:TERM FRON{c}")
+                if rango_val == "AUTO ON":
+                    self.inst.write("VOLT:DC:RANG:AUTO ON")
+                else:
+                    # Protección de Hardware: CH2 no soporta el rango de 100V
+                    if c == 2 and float(rango_val) > 10.0:
+                        self.inst.write("VOLT:DC:RANG 10.0")
+                    else:
+                        self.inst.write(f"VOLT:DC:RANG {rango_val}")
+                        
             self.ultimo_rango = rango_str
+            
+            # 3. Restaurar el canal activo para no desorientar al script principal
+            canal_actual = self.ultimo_canal if self.ultimo_canal else 1
+            self.inst.write(f"ROUT:TERM FRON{canal_actual}")
 
     def leer_voltaje(self):
         if not self.inst: return float('nan')
@@ -163,11 +181,16 @@ class HiloMedicionDual(QThread):
         nplc = float(self.estado['nplc'])
         usa_ch2 = self.estado['ch2_activado']
         self.voltimetro.configurar_rapido(nplc, self.estado['rango'])
-        delay_cambio_canal = 1.5 
+        delay_cambio_canal = 0.05
         
         lista_bias = self.estado['lista_bias']
         lista_pulsos = self.estado['lista_pulsos']
         T_descarga = self.estado['tiempo_descarga']
+
+        # Extraer parámetros de temporización de los pulsos de lectura
+        ancho_lectura = self.estado.get('ancho_lectura', 0.5)
+        periodo = self.estado.get('periodo_relajacion', 1.0)
+        es_pulsado = self.estado.get('relajacion_pulsada', False)
 
         # MOTOR DE SECUENCIA (Bucle Externo: Bias, Bucle Interno: Pulso)
         for c_bias in lista_bias:
@@ -186,12 +209,13 @@ class HiloMedicionDual(QThread):
                 # Avisar a la interfaz para limpiar los gráficos
                 self.nueva_secuencia.emit(c_bias, c_pulso, archivo_actual)
 
-                # Inicializar el archivo CSV
+                # Inicializar el archivo CSV (Header actualizado)
                 encabezado = [
                     "Tiempo (min)", "I pulso (mA)", "I bias (mA)", 
                     "Vinst 1 (V)", "Rinst 1 (Ohm)", "Rrem 1 (Ohm)", "Vbias 1 (V)", 
                     "Vinst 2 (V)", "Rinst 2 (Ohm)", "Rrem 2 (Ohm)", "Vbias 2 (V)", 
-                    "Tiempo de Pulso (s)", "Vcc (V)", "Vrange", "NPLC", "Ch2?"
+                    "Tiempo de Pulso (s)", "Ancho lectura (s)", "Periodo (s)", 
+                    "Vcc (V)", "Vrange", "NPLC", "Ch2?"
                 ]
                 with open(archivo_actual, 'w', newline='') as f:
                     csv.writer(f).writerow(encabezado)
@@ -233,12 +257,13 @@ class HiloMedicionDual(QThread):
                         'v2_inst': v2_inst, 'r2_inst': r2_inst
                     }
                     
+                    # Fila actualizada con Ancho y Periodo
                     fila = [
                         f"{t_min:.4f}", self.pulse_data['i_inst'], float('nan'),
                         self.pulse_data['v1_inst'], self.pulse_data['r1_inst'], float('nan'), float('nan'),
                         self.pulse_data['v2_inst'], self.pulse_data['r2_inst'], float('nan'), float('nan'),
-                        self.estado['tiempo_pulso'], self.estado['limite_voltaje'], 
-                        self.estado['rango'], nplc, usa_ch2
+                        self.estado['tiempo_pulso'], ancho_lectura, periodo,
+                        self.estado['limite_voltaje'], self.estado['rango'], nplc, usa_ch2
                     ]
                     self._guardar_csv(fila, archivo_actual)
                     time.sleep(0.01) 
@@ -248,10 +273,6 @@ class HiloMedicionDual(QThread):
                 # ------------------------------------------------
                 # FASE 2: DESCARGA/RELAJACIÓN (LIMITADA POR T_DESCARGA)
                 # ------------------------------------------------
-                es_pulsado = self.estado.get('relajacion_pulsada', False)
-                periodo = self.estado.get('periodo_relajacion', 1.0)
-                ancho = self.estado.get('ancho_lectura', 0.5)
-                
                 if not es_pulsado:
                     self.fuente.set_corriente(corr_bias)
                     self.fuente.operar()
@@ -265,14 +286,11 @@ class HiloMedicionDual(QThread):
                         self.fuente.set_corriente(corr_bias)
                         self.fuente.operar()
                         
-                        # Dejamos que el pulso fluya casi todo el 'Ancho' antes de pedir la lectura.
-                        # Asumimos que la lectura y el cable GPIB consumen ~100ms
                         margen_lectura = 0.1
                         if usa_ch2: margen_lectura += delay_cambio_canal
                         
-                        t_espera_on = ancho - margen_lectura
+                        t_espera_on = ancho_lectura - margen_lectura
                         if t_espera_on > 0:
-                            # Espera pasiva comprobando el reloj (no congela la interfaz)
                             while (time.time() - inicio_ciclo) < t_espera_on and self.corriendo:
                                 time.sleep(0.01)
                                 
@@ -288,7 +306,6 @@ class HiloMedicionDual(QThread):
                         v2_bias = self.voltimetro.leer_voltaje()
                     
                     if es_pulsado:
-                        # APAGADO INMEDIATO: Cortamos la fuente apenas devuelve el valor el voltímetro
                         self.fuente.standby()
                         
                     r1_bias = float('nan') if abs(corr_bias) < 1e-5 else (v1_bias / (corr_bias * 1e-3))
@@ -298,22 +315,26 @@ class HiloMedicionDual(QThread):
                     
                     self.datos_actualizados.emit(t_min, v1_bias, r1_bias, v2_bias, r2_bias, corr_bias, True)
                     
+                    # Fila actualizada con Ancho y Periodo
                     fila = [
                         f"{t_min:.4f}", self.pulse_data['i_inst'], corr_bias,
                         self.pulse_data['v1_inst'], self.pulse_data['r1_inst'], r1_bias, v1_bias,
                         self.pulse_data['v2_inst'], self.pulse_data['r2_inst'], r2_bias, v2_bias,
-                        self.estado['tiempo_pulso'], self.estado['limite_voltaje'], 
-                        self.estado['rango'], nplc, usa_ch2
+                        self.estado['tiempo_pulso'], ancho_lectura, periodo, 
+                        self.estado['limite_voltaje'], self.estado['rango'], nplc, usa_ch2
                     ]
+                    # ... (código previo de la fila del CSV) ...
                     self._guardar_csv(fila, archivo_actual)
                     
                     if es_pulsado:
-                        # TIEMPO OFF GARANTIZADO
-                        # Forzamos el descanso exacto (Período - Ancho) sin importar
-                        # cuánto se trabó el voltímetro durante el ciclo ON.
-                        tiempo_off_deseado = periodo - ancho
+                        # TIEMPO OFF DINÁMICO
+                        # Calculamos exactamente cuánto tiempo ha consumido el ciclo real (incluyendo el lag del multímetro)
+                        tiempo_consumido = time.time() - inicio_ciclo
+                        tiempo_off_deseado = periodo - tiempo_consumido
+                        
+                        # Si el hardware tardó más que el período asignado, forzamos un mínimo para proteger el bus
                         if tiempo_off_deseado <= 0: 
-                            tiempo_off_deseado = 0.1 # Seguro anti-colapso si el usuario configura mal la UI
+                            tiempo_off_deseado = 0.05 
                         
                         tiempo_inicio_off = time.time()
                         while (time.time() - tiempo_inicio_off) < tiempo_off_deseado and self.corriendo:
@@ -323,7 +344,7 @@ class HiloMedicionDual(QThread):
 
 
     # ==============================================================================
-    # LÓGICA 2: BARRIDO TRIANGULAR (El código original)
+    # LÓGICA 2: BARRIDO TRIANGULAR (SINCRONIZACIÓN ESTRICTA DE TIEMPO)
     # ==============================================================================
     def _loop_triangular(self, archivo_csv):
         encabezado = [
@@ -348,22 +369,18 @@ class HiloMedicionDual(QThread):
             # --- CONFIGURACIÓN ---
             nplc = float(self.estado['nplc'])
             usa_ch2 = self.estado['ch2_activado']
-            
             self.voltimetro.configurar_rapido(nplc, self.estado['rango'])
 
-            # --- MATEMÁTICA DE TIEMPO ---
-            multiplicador = 2 if usa_ch2 else 1
-            delay_relay = 0.015 if usa_ch2 else 0.0
-            tiempo_integracion = (nplc * 0.02) * multiplicador
-            overhead = 0.015 * multiplicador + delay_relay
-            
-            espera_pulso = max(0.05, self.estado['ancho_pulso'] - tiempo_integracion - overhead)
-            delay_cambio_canal = 1.5 
+            delay_cambio_canal = 0.05 
+            margen_lectura = 0.1
+            if usa_ch2: margen_lectura += delay_cambio_canal
 
             # ====================================================
             # FASE A: PULSO PRINCIPAL
             # ====================================================
             if not self.pausado_cbias:
+                inicio_ciclo_a = time.time()
+                
                 if abs(corriente_objetivo) < 1e-5:
                     corriente_objetivo = 1e-5 if corriente_objetivo >= 0 else -1e-5
 
@@ -372,16 +389,22 @@ class HiloMedicionDual(QThread):
                 
                 self.voltimetro.seleccionar_canal(1)
                 self.fuente.operar()
-                time.sleep(espera_pulso) 
+                
+                # 1. Espera Dinámica del Pulso ON
+                t_espera_on = self.estado['ancho_pulso'] - margen_lectura
+                if t_espera_on > 0:
+                    while (time.time() - inicio_ciclo_a) < t_espera_on and self.corriendo:
+                        time.sleep(0.01)
                 
                 v1_inst = self.voltimetro.leer_voltaje()
-                
                 v2_inst = float('nan')
+                
                 if usa_ch2:
                     self.voltimetro.seleccionar_canal(2)
                     time.sleep(delay_cambio_canal)
                     v2_inst = self.voltimetro.leer_voltaje()
                 
+                # APAGADO INMEDIATO
                 self.fuente.standby()
                 
                 r1_inst = float('nan') if abs(corriente_objetivo) < 1e-5 else (v1_inst / (corriente_objetivo * 1e-3))
@@ -395,7 +418,14 @@ class HiloMedicionDual(QThread):
                 'v2_inst': v2_inst, 'r2_inst': r2_inst
                 }
                 
-                time.sleep(self.estado['periodo_pulso'])
+                # 2. Espera Dinámica del Pulso OFF (Periodo)
+                tiempo_consumido_a = time.time() - inicio_ciclo_a
+                tiempo_off_deseado_a = self.estado['periodo_pulso'] - tiempo_consumido_a
+                if tiempo_off_deseado_a <= 0: tiempo_off_deseado_a = 0.05
+                
+                t_inicio_off = time.time()
+                while (time.time() - t_inicio_off) < tiempo_off_deseado_a and self.corriendo:
+                    time.sleep(0.01)
 
             # ====================================================
             # FASE B: PULSOS BIAS
@@ -405,6 +435,8 @@ class HiloMedicionDual(QThread):
                 for _ in range(num_bias):
                     if not self.corriendo or self.pausado_sbias: break
                     
+                    inicio_ciclo_b = time.time()
+                    
                     corr_bias_actual = self.estado['corr_bias']
                     if abs(corr_bias_actual) < 1e-5:
                         corr_bias_actual = 1e-5 if corr_bias_actual >= 0 else -1e-5
@@ -412,16 +444,22 @@ class HiloMedicionDual(QThread):
                     self.fuente.set_corriente(corr_bias_actual)
                     self.voltimetro.seleccionar_canal(1)
                     self.fuente.operar()
-                    time.sleep(espera_pulso)
+                    
+                    # 1. Espera Dinámica del Pulso ON (usamos ancho_pulso también aquí)
+                    t_espera_on = self.estado['ancho_pulso'] - margen_lectura
+                    if t_espera_on > 0:
+                        while (time.time() - inicio_ciclo_b) < t_espera_on and self.corriendo:
+                            time.sleep(0.01)
                     
                     v1_bias = self.voltimetro.leer_voltaje()
-                    
                     v2_bias = float('nan')
+                    
                     if usa_ch2:
                         self.voltimetro.seleccionar_canal(2)
                         time.sleep(delay_cambio_canal)
                         v2_bias = self.voltimetro.leer_voltaje()
                         
+                    # APAGADO INMEDIATO
                     self.fuente.standby()
                     
                     r1_bias = float('nan') if abs(corr_bias_actual) < 1e-5 else (v1_bias / (corr_bias_actual * 1e-3))
@@ -440,7 +478,14 @@ class HiloMedicionDual(QThread):
                     ]
                     self._guardar_csv(fila, archivo_csv)
                     
-                    time.sleep(self.estado['periodo_pulso'])
+                    # 2. Espera Dinámica del Pulso OFF (Periodo)
+                    tiempo_consumido_b = time.time() - inicio_ciclo_b
+                    tiempo_off_deseado_b = self.estado['periodo_pulso'] - tiempo_consumido_b
+                    if tiempo_off_deseado_b <= 0: tiempo_off_deseado_b = 0.05
+                    
+                    t_inicio_off = time.time()
+                    while (time.time() - t_inicio_off) < tiempo_off_deseado_b and self.corriendo:
+                        time.sleep(0.01)
             
             # ====================================================
             # FASE C: LÓGICA TRIANGULAR

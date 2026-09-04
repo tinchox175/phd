@@ -1,9 +1,0 @@
-Tiempo (min),I pulso (mA),I bias (mA),Vinst 1 (V),Rinst 1 (Ohm),Rrem 1 (Ohm),Vbias 1 (V),Vinst 2 (V),Rinst 2 (Ohm),Rrem 2 (Ohm),Vbias 2 (V),Tiempo de Pulso (s),Vcc (V),Vrange,NPLC,Ch2?
-0.0085,0.01,nan,3.1873008,318730.07999999996,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
-0.0157,0.01,nan,3.18434,318434.0,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
-0.0228,0.01,nan,3.1829663,318296.62999999995,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
-0.0299,0.01,nan,3.1825341,318253.41,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
-0.0370,0.01,nan,3.1825605,318256.05,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
-0.0441,0.01,nan,3.1825748,318257.48,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
-0.0513,0.01,nan,3.1825011,318250.11,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
-0.0584,0.01,nan,3.1831632,318316.32,nan,nan,nan,nan,nan,nan,30.0,20.0,10 V,10.0,False
