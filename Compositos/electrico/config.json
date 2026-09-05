@@ -1,0 +1,12 @@
+{
+    "directorio_defecto": "",
+    "max_current_ma": 10.0,
+    "k224": {
+        "ancho_pulso": 0.1,
+        "limite_voltaje": 20.0
+    },
+    "a34420a": {
+        "nplc": "2",
+        "rango": "10 V"
+    }
+}

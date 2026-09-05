@@ -1,0 +1,2 @@
+Tiempo (s)	Setpoint (K)	Temperatura (K)	dT/dt (K/min)	Potencia_LS (%)	Rrem1 (Ohm)	std Rrem1 (Ohm)	Rrem2 (Ohm)		std Rrem2 (Ohm)	V4W (V)	
+a

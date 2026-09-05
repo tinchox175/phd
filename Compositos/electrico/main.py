@@ -4,14 +4,94 @@ import csv
 import os
 from PySide6.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayout, 
                                QWidget, QLabel, QGroupBox, QPushButton, QTabWidget, 
-                               QLineEdit, QMessageBox, QStatusBar, QFileDialog)
+                               QLineEdit, QMessageBox, QStatusBar, QFileDialog,
+                               QFormLayout, QDialogButtonBox, QDialog, QDoubleSpinBox,
+                               QComboBox)
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 import pyqtgraph as pg
+import json
 
 # Import the View (UI) and Model (Hardware)
-from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, ParametrosRelajacionPane
-from hardware import HiloMedicionDual
+from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, ParametrosRelajacionPane, TemperaturaTab
+from hardware import HiloMedicionDual, HiloTemperatura
+
+
+class ConfiguracionGeneralDialog(QDialog):
+    def __init__(self, config_actual, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configuración General")
+        self.setModal(True)
+        self.resize(400, 300)
+        
+        self.config = config_actual
+        main_layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        
+        # --- TAB 1: Seguridad (Governor) ---
+        tab_seguridad = QWidget()
+        layout_seg = QFormLayout(tab_seguridad)
+        self.input_limite = QDoubleSpinBox()
+        self.input_limite.setDecimals(3)
+        self.input_limite.setRange(0.001, 105.0)
+        self.input_limite.setValue(self.config.get("max_current_ma", 105.0))
+        self.input_limite.setSuffix(" mA")
+        layout_seg.addRow("Corriente Máxima Global:", self.input_limite)
+        self.tabs.addTab(tab_seguridad, "Seguridad")
+        
+        # --- TAB 2: Valores K224 ---
+        tab_k224 = QWidget()
+        layout_k224 = QFormLayout(tab_k224)
+        k224_conf = self.config.get("k224", {})
+        
+        self.def_ancho = QDoubleSpinBox()
+        self.def_ancho.setDecimals(3)
+        self.def_ancho.setValue(k224_conf.get("ancho_pulso", 0.1))
+        layout_k224.addRow("Ancho Pulso (s):", self.def_ancho)
+        
+        self.def_vlim = QDoubleSpinBox()
+        self.def_vlim.setRange(0, 200)
+        self.def_vlim.setValue(k224_conf.get("limite_voltaje", 20.0))
+        layout_k224.addRow("Límite Voltaje (V):", self.def_vlim)
+        self.tabs.addTab(tab_k224, "Keithley 224")
+        
+        # --- TAB 3: Valores 34420A ---
+        tab_34420a = QWidget()
+        layout_34420a = QFormLayout(tab_34420a)
+        a34420a_conf = self.config.get("a34420a", {})
+        
+        self.def_nplc = QComboBox()
+        self.def_nplc.addItems(["0.02", "0.2", "1", "2", "10", "20", "100", "200"])
+        self.def_nplc.setCurrentText(a34420a_conf.get("nplc", "2"))
+        layout_34420a.addRow("NPLC Default:", self.def_nplc)
+        
+        self.def_rango = QComboBox()
+        self.def_rango.addItems(["Auto", "1 mV", "10 mV", "100 mV", "1 V", "10 V", "100 V"])
+        self.def_rango.setCurrentText(a34420a_conf.get("rango", "10 V"))
+        layout_34420a.addRow("Rango Default:", self.def_rango)
+        self.tabs.addTab(tab_34420a, "Agilent 34420A")
+        
+        main_layout.addWidget(self.tabs)
+        
+        # --- Botones OK/Cancel ---
+        botones = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+        main_layout.addWidget(botones)
+        
+    def get_config_actualizada(self):
+        """Reconstruye el diccionario JSON con los valores de las cajas."""
+        nueva_config = self.config.copy()
+        nueva_config["max_current_ma"] = self.input_limite.value()
+        nueva_config["k224"] = {
+            "ancho_pulso": self.def_ancho.value(),
+            "limite_voltaje": self.def_vlim.value()
+        }
+        nueva_config["a34420a"] = {
+            "nplc": self.def_nplc.currentText(),
+            "rango": self.def_rango.currentText()
+        }
+        return nueva_config
 
 class SMUControlTab(QWidget):
     """Wrapper for the B2902A SMU layout."""
@@ -71,39 +151,103 @@ class IVMeasurementApp(QMainWindow):
         self.setWindowTitle("Suite de Medición I-V")
         self.resize(1200, 800)
         
-        # Diccionario de estado compartido con el Worker
         self.estado_compartido = {}
+        self.archivo_config = "config.json"
         
-        # Variable para almacenar la ruta por defecto de guardado/carga
-        self.directorio_defecto = ""
+        # Diccionario base por si el JSON no existe
+        self.config_app = {
+            "directorio_defecto": "",
+            "max_current_ma": 105.0,
+            "k224": {"ancho_pulso": 0.1, "limite_voltaje": 20.0},
+            "a34420a": {"nplc": "2", "rango": "10 V"}
+        }
+        self._cargar_configuracion()
 
-        # Inicializar el hilo de hardware
         self.worker = HiloMedicionDual(self.estado_compartido)
+        self.worker_temp = HiloTemperatura(self.estado_compartido) # (Cuando lo conectes)
         
-        # Variables para almacenar datos de gráficos
         self._limpiar_datos_graficos()
-
         self._setup_menu()
         self._setup_ui()
         self._setup_connections()
-
-    def _setup_menu(self):
-        """Crea la barra de herramientas superior."""
-        menu_bar = self.menuBar()
         
-        # Menú Archivo
+        # Aplicar los defaults a la UI inmediatamente al arrancar
+        self._aplicar_gobernador(self.config_app["max_current_ma"])
+        self._aplicar_defaults_a_ui()
+
+    def _cargar_configuracion(self):
+        if os.path.exists(self.archivo_config):
+            try:
+                with open(self.archivo_config, 'r') as f:
+                    # Actualiza el diccionario base con lo que encuentre en el archivo
+                    self.config_app.update(json.load(f)) 
+            except Exception as e:
+                print(f"Error leyendo config.json: {e}")
+
+    def _guardar_configuracion(self):
+        with open(self.archivo_config, 'w') as f:
+            json.dump(self.config_app, f, indent=4)
+
+    # Reemplaza tu _setup_menu() existente
+    def _setup_menu(self):
+        menu_bar = self.menuBar()
         archivo_menu = menu_bar.addMenu("Archivo")
         
         self.action_abrir = QAction("Cargar...", self)
-        self.action_abrir.triggered.connect(self._cargar_medicion) # <-- Conectado aquí
+        self.action_abrir.triggered.connect(self._cargar_medicion)
         archivo_menu.addAction(self.action_abrir)
         
-        # Menú Opciones
         opciones_menu = menu_bar.addMenu("Opciones")
-        
-        self.action_configurar_ruta = QAction("Configurar Ruta por Defecto...", self)
-        self.action_configurar_ruta.triggered.connect(self._configurar_ruta_defecto) # <-- Actualizado
+        self.action_configurar_ruta = QAction("Carpeta por Defecto...", self)
+        self.action_configurar_ruta.triggered.connect(self._configurar_ruta_defecto)
         opciones_menu.addAction(self.action_configurar_ruta)
+
+        self.action_config = QAction("Configuración General...", self)
+        self.action_config.triggered.connect(self._abrir_configuracion)
+        opciones_menu.addAction(self.action_config)
+
+    def _abrir_configuracion(self):
+        """Despliega la ventana modal de ajustes."""
+        dialog = ConfiguracionGeneralDialog(self.config_app, self)
+        if dialog.exec(): # Si el usuario presiona OK
+            self.config_app = dialog.get_config_actualizada()
+            self._guardar_configuracion()
+            
+            # Forzar actualización inmediata en la UI
+            self._aplicar_gobernador(self.config_app["max_current_ma"])
+            self._aplicar_defaults_a_ui()
+            
+            self.status_bar.setStyleSheet("color: #2e7d32; font-weight: bold;")
+            self.status_bar.showMessage("Configuración guardada y aplicada.", 4000)
+
+    def _aplicar_defaults_a_ui(self):
+        """Inyecta los valores del JSON directamente en las cajas de texto de los paneles."""
+        p_k224 = self.dual_inst_tab.params_pane
+        i_34420 = self.dual_inst_tab.instant_pane
+        
+        k224_conf = self.config_app.get("k224", {})
+        a34420_conf = self.config_app.get("a34420a", {})
+        
+        # Aplicar valores K224
+        p_k224.ancho_pulso.setValue(k224_conf.get("ancho_pulso", 0.1))
+        p_k224.limite_voltaje.setValue(k224_conf.get("limite_voltaje", 20.0))
+        
+        # Aplicar valores 34420A
+        i_34420.combo_nplc.setCurrentText(a34420_conf.get("nplc", "2"))
+        i_34420.combo_rango.setCurrentText(a34420_conf.get("rango", "10 V"))
+
+    def _aplicar_gobernador(self, max_ma):
+        """Bloquea los rangos máximos de las cajas de corriente."""
+        p_k224 = self.dual_inst_tab.params_pane
+        cajas_corriente = [
+            p_k224.corr_maxima, p_k224.corr_minima, 
+            p_k224.corr_inicial, p_k224.corr_bias, p_k224.paso_corr
+        ]
+        
+        for caja in cajas_corriente:
+            caja.blockSignals(True)
+            caja.setRange(-max_ma, max_ma)
+            caja.blockSignals(False)
 
     def _configurar_ruta_defecto(self):
             """Abre un diálogo para seleccionar la carpeta por defecto para guardar archivos."""
@@ -130,10 +274,12 @@ class IVMeasurementApp(QMainWindow):
         self.setup_tabs = QTabWidget()
         self.smu_tab = SMUControlTab()
         self.dual_inst_tab = DualInstrumentControlTab()
-        self.relajacion_tab = RelajacionTab() # <-- NUEVO
+        self.relajacion_tab = RelajacionTab() 
+        self.temperatura_tab = TemperaturaTab() # <-- NUEVO
         
         self.setup_tabs.addTab(self.dual_inst_tab, "Setup: K224 + 34420A")
-        self.setup_tabs.addTab(self.relajacion_tab, "Relajación") # <-- NUEVO
+        self.setup_tabs.addTab(self.relajacion_tab, "Relajación") 
+        self.setup_tabs.addTab(self.temperatura_tab, "Temperatura (LakeShore)") # <-- NUEVO
         self.setup_tabs.addTab(self.smu_tab, "Setup: B2902A SMU")
         
         main_layout.addWidget(self.setup_tabs)
@@ -253,6 +399,89 @@ class IVMeasurementApp(QMainWindow):
         # Re-validar y ajustar gráficos al cambiar de pestaña
         self.setup_tabs.currentChanged.connect(self._validar_tiempos)
         self.setup_tabs.currentChanged.connect(self._al_cambiar_pestana)
+        self._setup_conexiones_temp()
+
+    # Añadir a _setup_connections(self):
+    def _setup_conexiones_temp(self):
+        t_pane = self.temperatura_tab.params_pane
+        t_pane.btn_medir.clicked.connect(self._iniciar_medicion_temp)
+        t_pane.btn_detencion.clicked.connect(self.worker_temp.detener_medicion)
+        
+        self.worker_temp.datos_temp.connect(self._actualizar_graficos_termodinamicos)
+        self.worker_temp.datos_res.connect(self._actualizar_graficos_res_temp)
+        self.worker_temp.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
+        self.worker_temp.error_detectado.connect(self._mostrar_error)
+
+    def _iniciar_medicion_temp(self):
+        if self.worker_temp.corriendo: return
+        
+        t_pane = self.temperatura_tab.params_pane
+        i_pane = self.temperatura_tab.instant_pane
+        
+        # Recolectar la tabla de pasos
+        tabla_T = []
+        for row in range(t_pane.tabla_pasos.rowCount()):
+            tabla_T.append({
+                'setpoint': t_pane.tabla_pasos.item(row, 0).text(),
+                'rate': t_pane.tabla_pasos.item(row, 1).text(),
+                'estable': t_pane.tabla_pasos.item(row, 2).text()
+            })
+            
+        if not tabla_T:
+            self._mostrar_error("La tabla de rampas está vacía.")
+            return
+            
+        self.estado_compartido.update({
+            'tabla_T': tabla_T,
+            'mhi': t_pane.motor_max.value(),
+            'mlo': t_pane.motor_min.value(),
+            'tiempo_estabilidad': t_pane.tiempo_estabilidad.value(),
+            'i_bias': t_pane.i_bias.value(),
+            'vlim': t_pane.vlim.value(),
+            'N_stat': t_pane.n_stat.value(),
+            'auto_rango_i': t_pane.chk_auto_rango.isChecked(),
+            'v_scale_max': t_pane.v_max.value(),
+            'v_scale_min': t_pane.v_min.value(),
+            'ch2_activado': i_pane.btn_ch2_toggle.isChecked(),
+            'nplc': i_pane.combo_nplc.currentText(),
+            'rango': i_pane.combo_rango.currentText(),
+            # TODO: Add CSV File Path Request here (similar to _iniciar_medicion)
+        })
+        
+        # Limpiar arrays de temperatura (Deberás inicializarlos en _limpiar_datos_graficos)
+        self.data_t_temp = []
+        self.data_T_act = []
+        self.data_T_set = []
+        
+        self.worker_temp.iniciar_medicion()
+
+    def _actualizar_graficos_termodinamicos(self, t_min, T_act, T_set, pot, v_motor):
+        """Actualiza laUI durante la rampa/estabilización (sin medir resistencia aún)."""
+        self.data_t_temp.append(t_min)
+        self.data_T_act.append(T_act)
+        self.data_T_set.append(T_set)
+        
+        # Si estás en la pestaña de Temperatura, puedes re-usar vt_curve temporalmente 
+        # o crear un panel dedicado de gráficos en el futuro.
+        if self.setup_tabs.tabText(self.setup_tabs.currentIndex()) == "Temperatura (LakeShore)":
+            self.vt_curve.setData(self.data_t_temp, self.data_T_act)
+            self.vt_curve_ch2.setData(self.data_t_temp, self.data_T_set)
+            self.vt_plot.setLabel('left', "Temperatura (K)")
+
+    def _actualizar_graficos_res_temp(self, T_act, r1, r2, t_min):
+        """Actualiza la UI cuando se completa un N_stat_msr."""
+        # Mostrar en los QLineEdit de Lectura Instantánea
+        i_pane = self.temperatura_tab.instant_pane
+        i_pane.vp_1_ro.setText(f"{T_act:.2f} K") # Usamos V_pos visualmente para T
+        i_pane.rinst_1_ro.setText(f"{r1:.3e}")
+        if not math.isnan(r2):
+            i_pane.rinst_2_ro.setText(f"{r2:.3e}")
+            
+        # Actualizar gráfico principal R(T)
+        self.data_rinst.append(r1)
+        self.data_i_rinst.append(T_act) # Usamos el eje X (Corriente) para guardar Temperatura
+        self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
+        self.res_plot.setLabel('bottom', "Temperatura (K)")
         
 
     def _al_cambiar_pestana(self, index):

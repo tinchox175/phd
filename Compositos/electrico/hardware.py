@@ -1,7 +1,75 @@
 import time
 import csv
 import math
+import pyvisa
 from PySide6.QtCore import QThread, Signal
+
+class LakeShoreDRC91CA:
+    def __init__(self, resource_name="GPIB0::12::INSTR", timeout=2000):
+        self.direccion = resource_name
+        self.rm = None
+        self.inst = None
+        self.timeout = timeout
+        
+    def conectar(self, rm):
+        self.rm = rm
+        self.inst = self.rm.open_resource(self.direccion)
+        self.inst.timeout = self.timeout
+        print(f"LakeShore Conectado: {self.direccion}")
+            
+    def read_temperature(self):
+        cmd = "WS"
+        response = self.inst.query(cmd)
+        return float(response.split('\r')[0].split('K')[0])
+            
+    def set_setpoint(self, setpoint):
+        cmd = f"S{float(setpoint)}"
+        self.inst.write(cmd)
+    
+    def get_setpoint(self):
+        response = self.inst.query("WP")
+        return float(response.split('\r')[0].split('K')[0])
+    
+    def get_HTR(self):
+        cmd = "W3"
+        response = self.inst.query(cmd)
+        return float(response.split('\r')[0].split(',')[-1])
+
+    def set_pid(self, p, i, d):
+        """Envía los parámetros Proporcional, Integral y Derivativo."""
+        self.inst.write(f"P{float(p)}")
+        self.inst.write(f"I{float(i)}")
+        self.inst.write(f"D{float(d)}")
+
+    def get_pid(self):
+        """Recupera los parámetros PID actuales (requiere parseo según manual del 91CA)."""
+        try:
+            p = float(self.inst.query("P?").strip())
+            i = float(self.inst.query("I?").strip())
+            d = float(self.inst.query("D?").strip())
+            return p, i, d
+        except:
+            return float('nan'), float('nan'), float('nan')
+
+class AgilentE3643A:
+    def __init__(self, resource_name='GPIB0::5::INSTR', timeout=5000):
+        self.direccion = resource_name
+        self.rm = None
+        self.inst = None
+        self.timeout = timeout
+        
+    def conectar(self, rm):
+        self.rm = rm
+        self.inst = self.rm.open_resource(self.direccion)
+        self.inst.timeout = self.timeout
+        print(f"E3643A Conectado: {self.direccion}")
+
+    def apply(self, voltage):
+        if voltage > 4.9:
+            voltage = 4.9
+        if self.inst:
+            self.inst.write(f"APPL {voltage},0")
+            self.inst.write("OUTP ON")
 
 class Keithley224:
     def __init__(self, direccion="GPIB0::02::INSTR"):
@@ -503,3 +571,252 @@ class HiloMedicionDual(QThread):
                     corriente_objetivo = self.estado['corr_minima']
                     self.estado['paso_corr'] = -paso
                     self.paso_invertido.emit(-paso)
+
+class HiloTemperatura(QThread):
+    # Señales para actualizar la UI sin congelarla
+    datos_temp = Signal(float, float, float, float, float) # t_min, T_act, T_set, Pot, V_motor
+    datos_res = Signal(float, float, float, float)         # T_act, R1, R2, t_min
+    estado_msg = Signal(str)                               # Mensajes como "Rampa de temperatura"
+    error_detectado = Signal(str)
+
+    def __init__(self, estado_compartido):
+        super().__init__()
+        self.estado = estado_compartido
+        self.corriendo = False
+        
+        # Instanciar todos los equipos
+        self.lakeshore = LakeShoreDRC91CA()
+        self.motor = AgilentE3643A()
+        self.fuente_i = Keithley224()
+        self.voltimetro = Agilent34420A()
+
+    def iniciar_medicion(self):
+        self.corriendo = True
+        self.start()
+
+    def detener_medicion(self):
+        self.corriendo = False
+
+    def _ajustar_motor(self, T_real, setpoint, v_actual, tol=1.5, paso=0.1):
+        """Encapsula la lógica termodinámica del script original."""
+        mlo = self.estado.get('mlo', 1.2)
+        mhi = self.estado.get('mhi', 4.8)
+        htr = self.lakeshore.get_HTR()
+        
+        if T_real > setpoint + tol and v_actual > mlo and htr < 10.0:
+            return v_actual - paso
+        elif T_real < setpoint - tol and v_actual < mhi and htr > 70.0:
+            return v_actual + paso
+        elif setpoint - tol <= T_real <= setpoint + tol:
+            return 2.6
+        return v_actual
+
+    def _ejecutar_n_stat_msr(self):
+        """Ejecuta N lecturas usando el Método Delta (+I, -I) con Auto-Rango inteligente."""
+        num_mediciones = int(self.estado.get('N_stat', 3))
+        i_bias = float(self.estado.get('i_bias', 0.001))
+        limite_v = float(self.estado.get('vlim', 20.0))
+        usa_ch2 = self.estado.get('ch2_activado', False)
+        
+        # Parámetros de Auto-rango
+        auto_rango = self.estado.get('auto_rango_i', False)
+        v_max = float(self.estado.get('v_scale_max', 0.01))
+        v_min = float(self.estado.get('v_scale_min', 0.001))
+        
+        delay_canal = 0.05
+        self.fuente_i.set_limite_voltaje(limite_v)
+        
+        resistencias_ch1 = []
+        resistencias_ch2 = []
+        
+        mediciones_exitosas = 0
+        
+        # Usamos un while para poder repetir el ciclo si el auto-rango interviene
+        while mediciones_exitosas < num_mediciones:
+            if not self.corriendo: break
+            
+            # ==========================================
+            # CICLO POSITIVO
+            # ==========================================
+            self.fuente_i.set_corriente(i_bias)
+            self.voltimetro.seleccionar_canal(1)
+            self.fuente_i.operar()
+            time.sleep(0.1) 
+            
+            v1_pos = self.voltimetro.leer_voltaje()
+            
+            # --- LÓGICA DE AUTO-RANGO ---
+            if auto_rango:
+                if abs(v1_pos) > v_max and abs(i_bias) > 1e-9:
+                    i_bias /= 10.0
+                    self.estado['i_bias'] = i_bias # Actualizar estado para la UI
+                    self.fuente_i.standby()
+                    time.sleep(0.05)
+                    continue # Abortar ciclo asimétrico y reiniciar
+                    
+                elif abs(v1_pos) < v_min and abs(i_bias) < 10e-3: # Techo de 10 mA
+                    i_bias *= 10.0
+                    self.estado['i_bias'] = i_bias
+                    self.fuente_i.standby()
+                    time.sleep(0.05)
+                    continue # Abortar ciclo asimétrico y reiniciar
+
+            v2_pos = float('nan')
+            if usa_ch2:
+                self.voltimetro.seleccionar_canal(2)
+                time.sleep(delay_canal)
+                v2_pos = self.voltimetro.leer_voltaje()
+                
+            self.fuente_i.standby()
+            time.sleep(0.05)
+            
+            # ==========================================
+            # CICLO NEGATIVO
+            # ==========================================
+            self.fuente_i.set_corriente(-i_bias)
+            self.voltimetro.seleccionar_canal(1)
+            self.fuente_i.operar()
+            time.sleep(0.1) 
+            
+            v1_neg = self.voltimetro.leer_voltaje()
+            v2_neg = float('nan')
+            if usa_ch2:
+                self.voltimetro.seleccionar_canal(2)
+                time.sleep(delay_canal)
+                v2_neg = self.voltimetro.leer_voltaje()
+                
+            self.fuente_i.standby()
+            time.sleep(0.05)
+            
+            # ==========================================
+            # CÁLCULO DELTA
+            # ==========================================
+            delta_i = (i_bias) - (-i_bias)
+            
+            r1 = (v1_pos - v1_neg) / delta_i
+            resistencias_ch1.append(r1)
+            
+            if usa_ch2:
+                r2 = (v2_pos - v2_neg) / delta_i
+                resistencias_ch2.append(r2)
+                
+            mediciones_exitosas += 1
+                
+        # Retornar promedios
+        r1_final = sum(resistencias_ch1) / len(resistencias_ch1) if resistencias_ch1 else float('nan')
+        r2_final = sum(resistencias_ch2) / len(resistencias_ch2) if resistencias_ch2 else float('nan')
+        
+        return r1_final, r2_final
+    
+    def run(self):
+        archivo_csv = self.estado.get('ruta_archivo', 'medicion_T.csv')
+        
+        try:
+            import pyvisa
+            rm = pyvisa.ResourceManager()
+            self.lakeshore.conectar(rm)
+            self.motor.conectar(rm)
+            self.fuente_i.conectar(rm)
+            self.voltimetro.conectar(rm)
+        except Exception as e:
+            self.error_detectado.emit(f"Error de conexión: {e}")
+            self.corriendo = False
+            return
+
+        tiempo_inicio = time.time()
+        tabla_pasos = self.estado.get('tabla_T', []) # Lista de diccionarios: [{'setpoint': 295, 'rate': 2, 'estable': 1}, ...]
+
+        for paso in tabla_pasos:
+            if not self.corriendo: break
+            
+            target_setpoint = float(paso['setpoint'])
+            rate = abs(float(paso['rate']))
+            requiere_estabilidad = float(paso['estable']) > 0
+            tiempo_estabilidad = float(self.estado.get('tiempo_estabilidad', 60.0))
+            
+            # ---------------------------------------------------------
+            # FASE 1: RAMPA (Dividida en sub-pasos para no bloquear)
+            # ---------------------------------------------------------
+            self.estado_msg.emit(f"Rampa hacia {target_setpoint} K")
+            current_setpoint = self.lakeshore.read_temperature()
+            
+            direccion = 1 if target_setpoint > current_setpoint else -1
+            paso_k = rate / 15.0 # Mismo delta temporal que el script original
+            rampa = list(np.arange(current_setpoint, target_setpoint, direccion * paso_k))
+            rampa.append(target_setpoint)
+            
+            v_motor = 2.6
+            for setpoint_intermedio in rampa:
+                if not self.corriendo: break
+                
+                self.lakeshore.set_setpoint(round(setpoint_intermedio, 2))
+                self.motor.apply(v_motor)
+                
+                # Bucle de espera de 3 segundos (60/20) dividido en ticks de 100ms
+                tK = time.time()
+                while (time.time() - tK) < 3.0 and self.corriendo:
+                    time.sleep(0.1)
+                
+                # Actualizar parámetros y enviar a UI
+                T_real = self.lakeshore.read_temperature()
+                v_motor = self._ajustar_motor(T_real, setpoint_intermedio, v_motor, tol=1.5, paso=0.1)
+                t_min = (time.time() - tiempo_inicio) / 60.0
+                
+                self.datos_temp.emit(t_min, T_real, setpoint_intermedio, self.lakeshore.get_HTR(), v_motor)
+
+            # ---------------------------------------------------------
+            # FASE 2: ESTABILIZACIÓN
+            # ---------------------------------------------------------
+            if requiere_estabilidad and self.corriendo:
+                self.estado_msg.emit(f"Esperando llegada a {target_setpoint} K")
+                v_motor = 2.6
+                
+                # Acercamiento grueso (Tol: 0.5K)
+                while True:
+                    if not self.corriendo: break
+                    T_real = self.lakeshore.read_temperature()
+                    if abs(T_real - target_setpoint) <= 0.5: break
+                    
+                    v_motor = self._ajustar_motor(T_real, target_setpoint, v_motor, tol=1.0, paso=0.05)
+                    self.motor.apply(v_motor)
+                    
+                    t_min = (time.time() - tiempo_inicio) / 60.0
+                    self.datos_temp.emit(t_min, T_real, target_setpoint, self.lakeshore.get_HTR(), v_motor)
+                    time.sleep(1.0)
+                
+                # Temporizador de estabilidad fina
+                self.estado_msg.emit(f"Estabilizando {tiempo_estabilidad} s")
+                t0_estabilidad = time.time()
+                
+                while (time.time() - t0_estabilidad) < tiempo_estabilidad and self.corriendo:
+                    T_real = self.lakeshore.read_temperature()
+                    v_motor = self._ajustar_motor(T_real, target_setpoint, v_motor, tol=1.0, paso=0.1)
+                    self.motor.apply(v_motor)
+                    
+                    # Si se sale del rango de 1K, reinicia el contador
+                    if abs(T_real - target_setpoint) > 1.0:
+                        t0_estabilidad = time.time()
+                        
+                    t_min = (time.time() - tiempo_inicio) / 60.0
+                    self.datos_temp.emit(t_min, T_real, target_setpoint, self.lakeshore.get_HTR(), v_motor)
+                    time.sleep(1.0)
+
+            # ---------------------------------------------------------
+            # FASE 3: MEDICIÓN (N_stat_msr)
+            # ---------------------------------------------------------
+            if self.corriendo and requiere_estabilidad:
+                self.estado_msg.emit(f"Midiendo en {target_setpoint} K")
+                self.motor.apply(2.6) # Reset seguro durante la medición
+                
+                # AQUÍ SE LLAMARÁ A LA LÓGICA DE MEDICIÓN (I+, I-)
+                r1, r2 = self._ejecutar_n_stat_msr()
+                
+                # Simulación temporal para evitar errores hasta que portemos N_stat_msr
+                r1, r2 = 100.0, 100.0 
+                t_min = (time.time() - tiempo_inicio) / 60.0
+                
+                self.datos_res.emit(self.lakeshore.read_temperature(), r1, r2, t_min)
+
+        self.estado_msg.emit("Barrido de Temperatura Finalizado")
+        self.motor.apply(2.6)
+        self.corriendo = False

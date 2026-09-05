@@ -637,3 +637,163 @@ class ParametersPane(QGroupBox):
         layout.addWidget(self.amp_min, 3, 2)
 
         layout.setColumnStretch(7, 1)
+
+from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox
+
+class ControlTemperaturaPane(QGroupBox):
+    def __init__(self):
+        super().__init__("Control de Temperatura (LakeShore + Motor)")
+        
+        layout = QGridLayout()
+        layout.setVerticalSpacing(5) 
+        layout.setHorizontalSpacing(8)
+        layout.setContentsMargins(5, 15, 5, 5)
+
+        # ==========================================
+        # FILA 1: Configuración de la Rampa
+        # ==========================================
+        layout.addWidget(QLabel("T Inicial (K)"), 0, 0)
+        self.t_inicial = QDoubleSpinBox()
+        self.t_inicial.setRange(0.0, 400.0)
+        self.t_inicial.setValue(295.0)
+        layout.addWidget(self.t_inicial, 1, 0)
+
+        layout.addWidget(QLabel("T Final (K)"), 0, 1)
+        self.t_final = QDoubleSpinBox()
+        self.t_final.setRange(0.0, 400.0)
+        self.t_final.setValue(290.0)
+        layout.addWidget(self.t_final, 1, 1)
+
+        layout.addWidget(QLabel("Rate (K/min)"), 0, 2)
+        self.rate = QDoubleSpinBox()
+        self.rate.setRange(0.01, 50.0)
+        self.rate.setValue(2.0)
+        layout.addWidget(self.rate, 1, 2)
+        
+        layout.addWidget(QLabel("¿Estabilizar? (1=Sí)"), 0, 3)
+        self.estabilizar = QSpinBox()
+        self.estabilizar.setRange(0, 1)
+        self.estabilizar.setValue(1)
+        layout.addWidget(self.estabilizar, 1, 3)
+
+        self.btn_agregar_paso = QPushButton("Agregar a Tabla")
+        layout.addWidget(self.btn_agregar_paso, 1, 4)
+
+        # ==========================================
+        # FILA 2: Tabla de Pasos
+        # ==========================================
+        self.tabla_pasos = QTableWidget(0, 3)
+        self.tabla_pasos.setHorizontalHeaderLabels(["T Setpoint (K)", "Rate (K/min)", "Estable?"])
+        self.tabla_pasos.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tabla_pasos.setMinimumHeight(120)
+        layout.addWidget(self.tabla_pasos, 2, 0, 1, 5)
+        
+        self.btn_limpiar_tabla = QPushButton("Limpiar Tabla")
+        layout.addWidget(self.btn_limpiar_tabla, 3, 0, 1, 5)
+
+        # ==========================================
+        # FILA 3: Límites de Motor y PID
+        # ==========================================
+        layout.addWidget(QLabel("Motor Máx (V)"), 4, 0)
+        self.motor_max = QDoubleSpinBox()
+        self.motor_max.setValue(4.8)
+        layout.addWidget(self.motor_max, 5, 0)
+
+        layout.addWidget(QLabel("Motor Mín (V)"), 4, 1)
+        self.motor_min = QDoubleSpinBox()
+        self.motor_min.setValue(1.2)
+        layout.addWidget(self.motor_min, 5, 1)
+
+        layout.addWidget(QLabel("Tiempo Estabilidad (s)"), 4, 2)
+        self.tiempo_estabilidad = QDoubleSpinBox()
+        self.tiempo_estabilidad.setRange(1.0, 3600.0)
+        self.tiempo_estabilidad.setValue(60.0)
+        layout.addWidget(self.tiempo_estabilidad, 5, 2)
+        
+        layout.addWidget(QLabel("P / I / D (Opcional)"), 4, 3)
+        self.pid_input = QLineEdit("50, 20, 0")
+        layout.addWidget(self.pid_input, 5, 3)
+
+        # ==========================================
+        # FILA 4: Parámetros de Medición (Método Delta)
+        # ==========================================
+        layout.addWidget(QLabel("I Bias (mA)"), 6, 0)
+        self.i_bias = QDoubleSpinBox()
+        self.i_bias.setDecimals(5)
+        self.i_bias.setRange(-105.0, 105.0)
+        self.i_bias.setValue(0.001)
+        layout.addWidget(self.i_bias, 7, 0)
+
+        layout.addWidget(QLabel("Límite Voltaje (V)"), 6, 1)
+        self.vlim = QDoubleSpinBox()
+        self.vlim.setValue(20.0)
+        layout.addWidget(self.vlim, 7, 1)
+        
+        layout.addWidget(QLabel("N Mediciones (Delta)"), 6, 2)
+        self.n_stat = QSpinBox()
+        self.n_stat.setRange(1, 100)
+        self.n_stat.setValue(3)
+        layout.addWidget(self.n_stat, 7, 2)
+
+        auto_layout = QVBoxLayout()
+        self.chk_auto_rango = QCheckBox("Auto-Rango I")
+        self.chk_auto_rango.setChecked(False)
+        auto_layout.addWidget(self.chk_auto_rango)
+        
+        self.v_max = QDoubleSpinBox()
+        self.v_max.setPrefix("Max V: ")
+        self.v_max.setDecimals(3)
+        self.v_max.setValue(0.01)
+        auto_layout.addWidget(self.v_max)
+        
+        self.v_min = QDoubleSpinBox()
+        self.v_min.setPrefix("Min V: ")
+        self.v_min.setDecimals(3)
+        self.v_min.setValue(0.001)
+        auto_layout.addWidget(self.v_min)
+        layout.addLayout(auto_layout, 6, 3, 2, 2)
+
+        # ==========================================
+        # FILA 5: Controles
+        # ==========================================
+        btn_layout = QHBoxLayout()
+        self.btn_medir = QPushButton("Iniciar Rampa")
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;") 
+        self.btn_detencion = QPushButton("Detener Rampa")
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;") 
+        
+        btn_layout.addWidget(self.btn_medir)
+        btn_layout.addWidget(self.btn_detencion)
+        layout.addLayout(btn_layout, 8, 0, 1, 5)
+
+        self.setLayout(layout)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        
+        # Conexiones internas de la UI
+        self.btn_agregar_paso.clicked.connect(self._agregar_a_tabla)
+        self.btn_limpiar_tabla.clicked.connect(lambda: self.tabla_pasos.setRowCount(0))
+
+    def _agregar_a_tabla(self):
+        row = self.tabla_pasos.rowCount()
+        self.tabla_pasos.insertRow(row)
+        self.tabla_pasos.setItem(row, 0, QTableWidgetItem(str(self.t_final.value())))
+        self.tabla_pasos.setItem(row, 1, QTableWidgetItem(str(self.rate.value())))
+        self.tabla_pasos.setItem(row, 2, QTableWidgetItem(str(self.estabilizar.value())))
+
+class TemperaturaTab(QWidget):
+    """Wrapper para la pestaña de prueba de Temperatura (LakeShore + Motor + K224 + A34420A)."""
+    def __init__(self):
+        super().__init__()
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+
+        panes_layout = QHBoxLayout()
+        self.params_pane = ControlTemperaturaPane()
+        self.instant_pane = Lecturas34420APane() # Reutilizamos el panel del voltímetro de IVsuplemento
+        
+        panes_layout.addWidget(self.params_pane, alignment=Qt.AlignmentFlag.AlignTop)
+        panes_layout.addWidget(self.instant_pane, alignment=Qt.AlignmentFlag.AlignTop)
+        panes_layout.addStretch()
+        
+        main_layout.addLayout(panes_layout)
+        self.setLayout(main_layout)
