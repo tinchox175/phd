@@ -3,6 +3,79 @@ import csv
 import math
 import pyvisa
 from PySide6.QtCore import QThread, Signal
+import numpy as np
+
+# ==============================================================================
+# DRIVER DEL LCR TONGHUI TH2832
+# ==============================================================================
+class TonghuiTH2832:
+    def __init__(self, resource_name="GPIB0::11::INSTR", timeout=5000):
+        self.direccion = resource_name
+        self.rm = None
+        self.inst = None
+        self.timeout = timeout
+        
+    def conectar(self, rm):
+        self.rm = rm
+        self.inst = self.rm.open_resource(self.direccion)
+        self.inst.timeout = self.timeout
+        # --- CRÍTICO PARA EQUIPOS TONGHUI ---
+        self.inst.write_termination = '\n'
+        self.inst.read_termination = '\n'
+        try:
+            idn = self.inst.query("*IDN?")
+            print(f"Identificación del equipo: {idn.strip()}")
+        except Exception as e:
+            raise Exception(f"Fallo en el handshake *IDN?: {e}")
+        self.inst.write("*CLS")
+        self.inst.write("TRIG:SOUR BUS") # Bloquear trigger interno
+        self.inst.write("FUNC:IMP RX")   # Siempre pedir Resistencia y Reactancia
+        print(f"TH2832 Conectado: {self.direccion}")
+        
+    def set_frecuencia(self, freq):
+        self.inst.write(f"FREQ {freq}HZ")
+        
+    def set_vac(self, vac):
+        self.inst.write(f"VOLT {vac}V")
+        
+    def set_alc(self, state):
+        self.inst.write(f"AMPL:ALC {1 if state else 0}")
+        
+    def set_vdc(self, vdc):
+        if abs(vdc) < 1e-5:
+            self.inst.write("BIAS:STAT 0")
+        else:
+            self.inst.write("BIAS:STAT 1")
+            self.inst.write(f"BIAS:VOLT {vdc}V")
+            
+    def set_speed_and_avg(self, speed_str, avg):
+        # speed_str: "FAST", "MED", "SLOW"
+        self.inst.write(f"APER {speed_str}, {int(avg)}")
+        
+    def set_rsou(self, rsou_val):
+        # 30 o 100 ohms
+        self.inst.write(f"ORES {int(rsou_val)}")
+        
+    def set_range(self, range_str):
+        if range_str.upper() == "AUTO":
+            self.inst.write("FUNC:IMP:RANG:AUTO ON")
+        else:
+            self.inst.write(f"FUNC:IMP:RANG {range_str}")
+            
+    def set_trigger_delay(self, delay_s):
+        self.inst.write(f"TRIG:DEL {delay_s}S")
+        
+    def medir(self):
+        self.inst.write("*TRG") 
+        respuesta = self.inst.query("FETC?")
+        partes = respuesta.split(',')
+        try:
+            r = float(partes[0])
+            x = float(partes[1])
+            status = int(partes[2]) # <-- Extraer el Byte de Status
+            return r, x, status
+        except:
+            return float('nan'), float('nan'), -1
 
 class LakeShoreDRC91CA:
     def __init__(self, resource_name="GPIB0::12::INSTR", timeout=2000):
@@ -598,7 +671,12 @@ class HiloTemperatura(QThread):
         self.corriendo = False
 
     def _ajustar_motor(self, T_real, setpoint, v_actual, tol=1.5, paso=0.1):
-        """Encapsula la lógica termodinámica del script original."""
+        """Encapsula la lógica termodinámica con opción de Override Manual."""
+        # 1. OVERRIDE MANUAL: Ignora la termodinámica
+        if self.estado.get('motor_manual', False):
+            return float(self.estado.get('motor_v_manual', 2.6))
+            
+        # 2. LÓGICA AUTOMÁTICA
         mlo = self.estado.get('mlo', 1.2)
         mhi = self.estado.get('mhi', 4.8)
         htr = self.lakeshore.get_HTR()
@@ -819,4 +897,86 @@ class HiloTemperatura(QThread):
 
         self.estado_msg.emit("Barrido de Temperatura Finalizado")
         self.motor.apply(2.6)
+        self.corriendo = False
+
+# ==============================================================================
+# HILO DE ESPECTROSCOPÍA DE IMPEDANCIA
+# ==============================================================================
+class HiloEspectroscopia(QThread):
+    datos_is = Signal(float, float, float, float, float, float, float, int)
+    estado_msg = Signal(str)
+    error_detectado = Signal(str)
+
+    def __init__(self, estado_compartido):
+        super().__init__()
+        self.estado = estado_compartido
+        self.corriendo = False
+        self.lcr = TonghuiTH2832(resource_name=self.estado.get('gpib_lcr', "GPIB0::11::INSTR"))
+
+    def iniciar_medicion(self):
+        self.corriendo = True
+        self.start()
+
+    def detener_medicion(self):
+        self.corriendo = False
+
+    def run(self):
+        archivo_csv = self.estado.get('ruta_archivo_is', 'espectroscopia.csv')
+        
+        try:
+            import pyvisa
+            rm = pyvisa.ResourceManager()
+            self.lcr.conectar(rm)
+        except Exception as e:
+            self.error_detectado.emit(f"Error conectando al LCR: {e}")
+            self.corriendo = False
+            return
+
+        # 1. Aplicar configuraciones globales del LCR
+        self.lcr.set_alc(self.estado.get('alc_on', False))
+        self.lcr.set_vac(self.estado.get('vac', 0.1))
+        self.lcr.set_speed_and_avg(self.estado.get('speed', "MED"), self.estado.get('avg', 1))
+        self.lcr.set_rsou(self.estado.get('rsou', 100))
+        self.lcr.set_range(self.estado.get('rango', "AUTO"))
+        self.lcr.set_trigger_delay(self.estado.get('trig_delay', 0.0))
+        
+        lista_vdc = self.estado.get('lista_vdc', [0.0])
+        frecuencias = self.estado.get('frecuencias', [])
+        
+        # Preparar CSV
+        encabezado = ["Tiempo (min)", "Vdc (V)", "Freq (Hz)", "R (Ohm)", "X (Ohm)", "|Z| (Ohm)", "Theta (Deg)", "Status"]
+        with open(archivo_csv, 'w', newline='') as f:
+            csv.writer(f).writerow(encabezado)
+
+        tiempo_inicio = time.time()
+
+        for vdc in lista_vdc:
+            if not self.corriendo: break
+            
+            self.estado_msg.emit(f"Estabilizando Vdc = {vdc} V")
+            self.lcr.set_vdc(vdc)
+            time.sleep(1.0) # Esperar a que el capacitor se cargue al nuevo Vdc
+            
+            for freq in frecuencias:
+                if not self.corriendo: break
+                
+                self.lcr.set_frecuencia(freq)
+                
+                # Tiempo de estabilización dinámico (bajas frecuencias requieren más tiempo)
+                delay_freq = 0.5 if freq < 100 else 0.1
+                time.sleep(delay_freq)
+                
+                r, x, status = self.lcr.medir()
+                
+                z_mag = math.sqrt(r**2 + x**2) if not math.isnan(r) else float('nan')
+                theta_deg = math.degrees(math.atan2(x, r)) if not math.isnan(r) else float('nan')
+                t_min = (time.time() - tiempo_inicio) / 60.0
+                
+                self.datos_is.emit(vdc, freq, r, x, z_mag, theta_deg, t_min, status)
+                
+                with open(archivo_csv, 'a', newline='') as f:
+                    csv.writer(f).writerow([f"{t_min:.4f}", vdc, freq, r, x, z_mag, theta_deg, status])
+
+        self.estado_msg.emit("Espectroscopía Finalizada")
+        self.lcr.set_vdc(0.0) # Seguridad: apagar bias al terminar
         self.corriendo = False

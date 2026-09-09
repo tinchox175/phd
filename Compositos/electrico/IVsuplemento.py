@@ -650,7 +650,7 @@ class ControlTemperaturaPane(QGroupBox):
         layout.setContentsMargins(5, 15, 5, 5)
 
         # ==========================================
-        # FILA 1: Configuración de la Rampa
+        # FILA 1: Configuración de la Rampa (Añadido Paso dT)
         # ==========================================
         layout.addWidget(QLabel("T Inicial (K)"), 0, 0)
         self.t_inicial = QDoubleSpinBox()
@@ -664,20 +664,26 @@ class ControlTemperaturaPane(QGroupBox):
         self.t_final.setValue(290.0)
         layout.addWidget(self.t_final, 1, 1)
 
-        layout.addWidget(QLabel("Rate (K/min)"), 0, 2)
+        layout.addWidget(QLabel("Paso dT (K)"), 0, 2)
+        self.t_paso = QDoubleSpinBox()
+        self.t_paso.setRange(0.1, 400.0)
+        self.t_paso.setValue(5.0)
+        layout.addWidget(self.t_paso, 1, 2)
+
+        layout.addWidget(QLabel("Rate (K/min)"), 0, 3)
         self.rate = QDoubleSpinBox()
         self.rate.setRange(0.01, 50.0)
         self.rate.setValue(2.0)
-        layout.addWidget(self.rate, 1, 2)
+        layout.addWidget(self.rate, 1, 3)
         
-        layout.addWidget(QLabel("¿Estabilizar? (1=Sí)"), 0, 3)
+        layout.addWidget(QLabel("¿Estabilizar? (1=Sí)"), 0, 4)
         self.estabilizar = QSpinBox()
         self.estabilizar.setRange(0, 1)
         self.estabilizar.setValue(1)
-        layout.addWidget(self.estabilizar, 1, 3)
+        layout.addWidget(self.estabilizar, 1, 4)
 
         self.btn_agregar_paso = QPushButton("Agregar a Tabla")
-        layout.addWidget(self.btn_agregar_paso, 1, 4)
+        layout.addWidget(self.btn_agregar_paso, 1, 5)
 
         # ==========================================
         # FILA 2: Tabla de Pasos
@@ -686,13 +692,17 @@ class ControlTemperaturaPane(QGroupBox):
         self.tabla_pasos.setHorizontalHeaderLabels(["T Setpoint (K)", "Rate (K/min)", "Estable?"])
         self.tabla_pasos.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.tabla_pasos.setMinimumHeight(120)
-        layout.addWidget(self.tabla_pasos, 2, 0, 1, 5)
+        layout.addWidget(self.tabla_pasos, 2, 0, 1, 6)
         
-        self.btn_limpiar_tabla = QPushButton("Limpiar Tabla")
-        layout.addWidget(self.btn_limpiar_tabla, 3, 0, 1, 5)
+        btn_layout_tabla = QHBoxLayout()
+        self.btn_eliminar_paso = QPushButton("Borrar Fila Seleccionada")
+        self.btn_limpiar_tabla = QPushButton("Limpiar Tabla Completa")
+        btn_layout_tabla.addWidget(self.btn_eliminar_paso)
+        btn_layout_tabla.addWidget(self.btn_limpiar_tabla)
+        layout.addLayout(btn_layout_tabla, 3, 0, 1, 6)
 
         # ==========================================
-        # FILA 3: Límites de Motor y PID
+        # FILA 3: Límites de Motor y Control Manual 
         # ==========================================
         layout.addWidget(QLabel("Motor Máx (V)"), 4, 0)
         self.motor_max = QDoubleSpinBox()
@@ -704,15 +714,22 @@ class ControlTemperaturaPane(QGroupBox):
         self.motor_min.setValue(1.2)
         layout.addWidget(self.motor_min, 5, 1)
 
-        layout.addWidget(QLabel("Tiempo Estabilidad (s)"), 4, 2)
-        self.tiempo_estabilidad = QDoubleSpinBox()
-        self.tiempo_estabilidad.setRange(1.0, 3600.0)
-        self.tiempo_estabilidad.setValue(60.0)
-        layout.addWidget(self.tiempo_estabilidad, 5, 2)
+        manual_layout = QVBoxLayout()
+        self.chk_motor_manual = QCheckBox("Override Manual")
+        self.chk_motor_manual.setStyleSheet("color: #d32f2f; font-weight: bold;")
+        manual_layout.addWidget(self.chk_motor_manual)
         
-        layout.addWidget(QLabel("P / I / D (Opcional)"), 4, 3)
+        self.v_motor_manual = QDoubleSpinBox()
+        self.v_motor_manual.setPrefix("V Motor: ")
+        self.v_motor_manual.setRange(0.0, 4.9)
+        self.v_motor_manual.setValue(2.6)
+        manual_layout.addWidget(self.v_motor_manual)
+        
+        layout.addLayout(manual_layout, 4, 2, 2, 2)
+        
+        layout.addWidget(QLabel("P / I / D (Opcional)"), 4, 4, 1, 2)
         self.pid_input = QLineEdit("50, 20, 0")
-        layout.addWidget(self.pid_input, 5, 3)
+        layout.addWidget(self.pid_input, 5, 4, 1, 2)
 
         # ==========================================
         # FILA 4: Parámetros de Medición (Método Delta)
@@ -751,34 +768,60 @@ class ControlTemperaturaPane(QGroupBox):
         self.v_min.setDecimals(3)
         self.v_min.setValue(0.001)
         auto_layout.addWidget(self.v_min)
-        layout.addLayout(auto_layout, 6, 3, 2, 2)
+        layout.addLayout(auto_layout, 6, 3, 2, 3)
 
         # ==========================================
-        # FILA 5: Controles
+        # FILA 5: Controles Principales
         # ==========================================
         btn_layout = QHBoxLayout()
         self.btn_medir = QPushButton("Iniciar Rampa")
-        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;") 
-        self.btn_detencion = QPushButton("Detener Rampa")
-        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;") 
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 35px;") 
         
-        btn_layout.addWidget(self.btn_medir)
-        btn_layout.addWidget(self.btn_detencion)
-        layout.addLayout(btn_layout, 8, 0, 1, 5)
+        self.btn_aplicar = QPushButton("Aplicar Cambios")
+        self.btn_aplicar.setStyleSheet("background-color: #fff3e0; color: black; font-weight: bold; height: 35px;")
+        
+        self.btn_detencion = QPushButton("Detener Rampa")
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 35px;") 
+        
+        for btn in [self.btn_medir, self.btn_aplicar, self.btn_detencion]:
+            btn_layout.addWidget(btn)
 
+        layout.addLayout(btn_layout, 8, 0, 1, 6)
+        
         self.setLayout(layout)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         
-        # Conexiones internas de la UI
+        # Conexiones internas de la UI 
         self.btn_agregar_paso.clicked.connect(self._agregar_a_tabla)
         self.btn_limpiar_tabla.clicked.connect(lambda: self.tabla_pasos.setRowCount(0))
+        self.btn_eliminar_paso.clicked.connect(self._eliminar_fila)
 
     def _agregar_a_tabla(self):
-        row = self.tabla_pasos.rowCount()
-        self.tabla_pasos.insertRow(row)
-        self.tabla_pasos.setItem(row, 0, QTableWidgetItem(str(self.t_final.value())))
-        self.tabla_pasos.setItem(row, 1, QTableWidgetItem(str(self.rate.value())))
-        self.tabla_pasos.setItem(row, 2, QTableWidgetItem(str(self.estabilizar.value())))
+        import numpy as np
+        t_ini = self.t_inicial.value()
+        t_fin = self.t_final.value()
+        paso = self.t_paso.value()
+        rate = self.rate.value()
+        estable = self.estabilizar.value()
+        
+        if t_ini == t_fin:
+            puntos_t = [t_fin]
+        else:
+            direccion = 1 if t_fin > t_ini else -1
+            # np.arange no incluye el último valor si es exacto, agregamos margen del 10% del paso
+            puntos_t = list(np.arange(t_ini, t_fin + (direccion * paso * 0.1), direccion * paso))
+            
+        for p in puntos_t:
+            row = self.tabla_pasos.rowCount()
+            self.tabla_pasos.insertRow(row)
+            self.tabla_pasos.setItem(row, 0, QTableWidgetItem(f"{p:.2f}"))
+            self.tabla_pasos.setItem(row, 1, QTableWidgetItem(str(rate)))
+            self.tabla_pasos.setItem(row, 2, QTableWidgetItem(str(estable)))
+
+    def _eliminar_fila(self):
+        row = self.tabla_pasos.currentRow()
+        if row >= 0:
+            self.tabla_pasos.removeRow(row)
 
 class TemperaturaTab(QWidget):
     """Wrapper para la pestaña de prueba de Temperatura (LakeShore + Motor + K224 + A34420A)."""
@@ -797,3 +840,258 @@ class TemperaturaTab(QWidget):
         
         main_layout.addLayout(panes_layout)
         self.setLayout(main_layout)
+
+class ControlEspectroscopiaPane(QGroupBox):
+    def __init__(self):
+        super().__init__("Parámetros de Espectroscopía (TH2832)")
+        main_layout = QHBoxLayout(self) # Split principal: Izquierda / Derecha
+
+        # ==========================================
+        # MITAD IZQUIERDA: Paneles Verticales
+        # ==========================================
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 10, 0)
+        
+        # --- 1. Generadores de Barridos (Frecuencia y Vdc fusionados) ---
+        grp_barridos = QGroupBox("Generadores de Barridos")
+        l_bar = QGridLayout(grp_barridos)
+        
+        l_bar.addWidget(QLabel("F. Ini (Hz)"), 0, 0)
+        self.f_ini = QDoubleSpinBox()
+        self.f_ini.setRange(20, 200000)
+        self.f_ini.setValue(20)
+        l_bar.addWidget(self.f_ini, 0, 1)
+
+        l_bar.addWidget(QLabel("F. Fin (Hz)"), 0, 2)
+        self.f_fin = QDoubleSpinBox()
+        self.f_fin.setRange(20, 200000)
+        self.f_fin.setValue(200000)
+        l_bar.addWidget(self.f_fin, 0, 3)
+
+        l_bar.addWidget(QLabel("Puntos"), 1, 0)
+        self.f_pts = QSpinBox()
+        self.f_pts.setRange(2, 2000)
+        self.f_pts.setValue(50)
+        l_bar.addWidget(self.f_pts, 1, 1)
+
+        l_bar.addWidget(QLabel("Escala"), 1, 2)
+        self.f_escala = QComboBox()
+        self.f_escala.addItems(["Log", "Lin"])
+        l_bar.addWidget(self.f_escala, 1, 3)
+
+        self.btn_add_freq = QPushButton("Añadir a Lista Freq ->")
+        l_bar.addWidget(self.btn_add_freq, 2, 0, 1, 4)
+
+        # Sección Vdc (Alineado y Compacto)
+        self.chk_vdc_sweep = QCheckBox("Habilitar Barrido Vdc")
+        self.chk_vdc_sweep.setChecked(False)
+        l_bar.addWidget(self.chk_vdc_sweep, 3, 0, 1, 2)
+        
+        l_bar.addWidget(QLabel("Vdc Fijo (V)"), 3, 2)
+        self.vdc_fijo = QDoubleSpinBox()
+        self.vdc_fijo.setRange(-5.0, 5.0)
+        self.vdc_fijo.setValue(0.0)
+        l_bar.addWidget(self.vdc_fijo, 3, 3) # Ocupa 1 sola columna
+
+        l_bar.addWidget(QLabel("V. Ini (V)"), 4, 0)
+        self.v_ini = QDoubleSpinBox()
+        self.v_ini.setRange(-5.0, 5.0)
+        l_bar.addWidget(self.v_ini, 4, 1)
+
+        l_bar.addWidget(QLabel("V. Fin (V)"), 4, 2)
+        self.v_fin = QDoubleSpinBox()
+        self.v_fin.setRange(-5.0, 5.0)
+        l_bar.addWidget(self.v_fin, 4, 3) # Sube de fila para ahorrar espacio
+
+        l_bar.addWidget(QLabel("Paso (V)"), 5, 0)
+        self.v_paso = QDoubleSpinBox()
+        self.v_paso.setRange(0.001, 5.0)
+        self.v_paso.setValue(0.1)
+        l_bar.addWidget(self.v_paso, 5, 1)
+
+        self.btn_add_vdc = QPushButton("Añadir a Lista Vdc ->")
+        l_bar.addWidget(self.btn_add_vdc, 5, 2, 1, 2)
+
+        left_layout.addWidget(grp_barridos)
+
+        # --- 2. Ajustes del LCR (Subwindow) ---
+        grp_lcr = QGroupBox("Ajustes TH2832")
+        l_lcr = QGridLayout(grp_lcr)
+        
+        l_lcr.addWidget(QLabel("Vac (Vrms)"), 0, 0)
+        self.vac = QDoubleSpinBox()
+        self.vac.setRange(0.01, 2.0)
+        self.vac.setValue(0.1)
+        l_lcr.addWidget(self.vac, 0, 1)
+        
+        self.chk_alc = QCheckBox("ALC ON")
+        self.chk_alc.setChecked(True)
+        l_lcr.addWidget(self.chk_alc, 0, 2, 1, 2)
+
+        l_lcr.addWidget(QLabel("Velocidad"), 1, 0)
+        self.combo_speed = QComboBox()
+        self.combo_speed.addItems(["SLOW", "MED", "FAST"])
+        self.combo_speed.setCurrentText("MED")
+        l_lcr.addWidget(self.combo_speed, 1, 1)
+
+        l_lcr.addWidget(QLabel("Avg Pts"), 1, 2)
+        self.avg_pts = QSpinBox()
+        self.avg_pts.setRange(1, 255)
+        self.avg_pts.setValue(1)
+        l_lcr.addWidget(self.avg_pts, 1, 3)
+
+        l_lcr.addWidget(QLabel("Rsou (Ω)"), 2, 0)
+        self.combo_rsou = QComboBox()
+        self.combo_rsou.addItems(["100", "30"])
+        l_lcr.addWidget(self.combo_rsou, 2, 1)
+
+        l_lcr.addWidget(QLabel("Rango"), 2, 2)
+        self.combo_rango = QComboBox()
+        self.combo_rango.addItems(["AUTO", "3", "10", "30", "100", "300", "1000", "3000", "10000", "30000", "100000"])
+        l_lcr.addWidget(self.combo_rango, 2, 3)
+
+        l_lcr.addWidget(QLabel("Trig Delay(s)"), 3, 0)
+        self.trig_delay = QDoubleSpinBox()
+        self.trig_delay.setRange(0.0, 60.0)
+        l_lcr.addWidget(self.trig_delay, 3, 1)
+        left_layout.addWidget(grp_lcr)
+
+        # --- Botones Principales y Warning ---
+        self.lbl_warning_is = QLabel(" ")
+        self.lbl_warning_is.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 11px;")
+        left_layout.addWidget(self.lbl_warning_is)
+
+        btn_layout = QHBoxLayout()
+        self.btn_medir = QPushButton("Iniciar Espectroscopía")
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 35px;") 
+        self.btn_detencion = QPushButton("Detener")
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 35px;") 
+        
+        btn_layout.addWidget(self.btn_medir)
+        btn_layout.addWidget(self.btn_detencion)
+        left_layout.addLayout(btn_layout)
+        
+        left_layout.addStretch() # Empuja los bloques hacia arriba
+        main_layout.addWidget(left_pane, stretch=1)
+
+        # ==========================================
+        # MITAD DERECHA: Listas Verticales Altas
+        # ==========================================
+        right_pane = QWidget()
+        right_layout = QHBoxLayout(right_pane)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Columna Lista Frecuencias
+        freq_col = QVBoxLayout()
+        self.tabla_freq = QTableWidget(0, 1)
+        self.tabla_freq.setHorizontalHeaderLabels(["Freqs (Hz)"])
+        self.tabla_freq.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        freq_col.addWidget(self.tabla_freq)
+        
+        btn_f_lay = QHBoxLayout()
+        self.btn_eliminar_freq = QPushButton("Borrar Sel.")
+        self.btn_limpiar_freq = QPushButton("Limpiar Todo")
+        btn_f_lay.addWidget(self.btn_eliminar_freq)
+        btn_f_lay.addWidget(self.btn_limpiar_freq)
+        freq_col.addLayout(btn_f_lay)
+        right_layout.addLayout(freq_col)
+
+        # Columna Lista Vdc
+        vdc_col = QVBoxLayout()
+        self.tabla_vdc = QTableWidget(0, 1)
+        self.tabla_vdc.setHorizontalHeaderLabels(["Vdc (V)"])
+        self.tabla_vdc.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        vdc_col.addWidget(self.tabla_vdc)
+        
+        btn_v_lay = QHBoxLayout()
+        self.btn_eliminar_vdc = QPushButton("Borrar Sel.")
+        self.btn_limpiar_vdc = QPushButton("Limpiar Todo")
+        btn_v_lay.addWidget(self.btn_eliminar_vdc)
+        btn_v_lay.addWidget(self.btn_limpiar_vdc)
+        vdc_col.addLayout(btn_v_lay)
+        right_layout.addLayout(vdc_col)
+
+        main_layout.addWidget(right_pane, stretch=1)
+        
+        # Conexiones
+        self.btn_add_freq.clicked.connect(self._add_freq)
+        self.btn_add_vdc.clicked.connect(self._add_vdc)
+        self.btn_limpiar_freq.clicked.connect(lambda: self.tabla_freq.setRowCount(0))
+        self.btn_limpiar_vdc.clicked.connect(lambda: self.tabla_vdc.setRowCount(0))
+        self.btn_eliminar_freq.clicked.connect(lambda: self._eliminar_fila(self.tabla_freq))
+        self.btn_eliminar_vdc.clicked.connect(lambda: self._eliminar_fila(self.tabla_vdc))
+        
+        self.combo_rsou.currentTextChanged.connect(self._validar_limites_bias)
+        self.chk_vdc_sweep.toggled.connect(self._toggle_vdc_mode)
+        
+        self._toggle_vdc_mode(False) # Estado por defecto: Vdc Fijo
+
+    def _toggle_vdc_mode(self, checked):
+        self.vdc_fijo.setEnabled(not checked)
+        self.v_ini.setEnabled(checked)
+        self.v_fin.setEnabled(checked)
+        self.v_paso.setEnabled(checked)
+        self.btn_add_vdc.setEnabled(checked)
+        self.tabla_vdc.setEnabled(checked)
+        self.btn_eliminar_vdc.setEnabled(checked)
+        self.btn_limpiar_vdc.setEnabled(checked)
+
+    def _validar_limites_bias(self, rsou_str):
+        if rsou_str == "30":
+            max_v = 1.5
+            self.lbl_warning_is.setText("⚠ Rsou 30Ω: Límite de Vdc restringido a ±1.5V")
+        else:
+            max_v = 5.0
+            self.lbl_warning_is.setText(" ")
+            
+        for caja in [self.v_ini, self.v_fin, self.vdc_fijo]:
+            caja.blockSignals(True)
+            caja.setRange(-max_v, max_v)
+            caja.blockSignals(False)
+
+    def _add_freq(self):
+        import numpy as np
+        start = self.f_ini.value()
+        stop = self.f_fin.value()
+        pts = self.f_pts.value()
+        escala = self.f_escala.currentText()
+        
+        if escala == "Log": frecuencias = list(np.logspace(np.log10(start), np.log10(stop), pts))
+        else: frecuencias = list(np.linspace(start, stop, pts))
+            
+        for f in frecuencias:
+            f_int = int(round(f)) # Redondeo de enteros
+            row = self.tabla_freq.rowCount()
+            self.tabla_freq.insertRow(row)
+            self.tabla_freq.setItem(row, 0, QTableWidgetItem(f"{f_int}"))
+
+    def _add_vdc(self):
+        import numpy as np
+        v_ini = self.v_ini.value()
+        v_fin = self.v_fin.value()
+        v_paso = self.v_paso.value()
+        
+        if v_ini == v_fin: voltajes = [v_fin]
+        else:
+            direccion = 1 if v_fin > v_ini else -1
+            voltajes = list(np.arange(v_ini, v_fin + (direccion * v_paso * 0.1), direccion * v_paso))
+            
+        for v in voltajes:
+            row = self.tabla_vdc.rowCount()
+            self.tabla_vdc.insertRow(row)
+            self.tabla_vdc.setItem(row, 0, QTableWidgetItem(f"{v:.3f}"))
+
+    def _eliminar_fila(self, tabla):
+        row = tabla.currentRow()
+        if row >= 0:
+            tabla.removeRow(row)
+
+class EspectroscopiaTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        self.params_pane = ControlEspectroscopiaPane()
+        main_layout.addWidget(self.params_pane, alignment=Qt.AlignmentFlag.AlignTop)
+        main_layout.addStretch()

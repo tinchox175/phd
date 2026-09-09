@@ -8,5 +8,14 @@
     "a34420a": {
         "nplc": "2",
         "rango": "10 V"
+    },
+    "th2832": {
+        "vac": 0.1,
+        "alc_on": false,
+        "speed": "MED",
+        "avg": 1,
+        "rsou": "100",
+        "rango": "AUTO",
+        "trig_delay": 0.0
     }
 }

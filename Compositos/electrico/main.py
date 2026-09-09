@@ -6,16 +6,16 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayo
                                QWidget, QLabel, QGroupBox, QPushButton, QTabWidget, 
                                QLineEdit, QMessageBox, QStatusBar, QFileDialog,
                                QFormLayout, QDialogButtonBox, QDialog, QDoubleSpinBox,
-                               QComboBox)
+                               QComboBox, QSpinBox, QCheckBox, QSizePolicy)
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 import pyqtgraph as pg
 import json
 
 # Import the View (UI) and Model (Hardware)
-from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, ParametrosRelajacionPane, TemperaturaTab
-from hardware import HiloMedicionDual, HiloTemperatura
+from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, ParametrosRelajacionPane, TemperaturaTab, ControlEspectroscopiaPane, EspectroscopiaTab
 
+from hardware import HiloMedicionDual, HiloTemperatura, HiloEspectroscopia
 
 class ConfiguracionGeneralDialog(QDialog):
     def __init__(self, config_actual, parent=None):
@@ -70,6 +70,47 @@ class ConfiguracionGeneralDialog(QDialog):
         self.def_rango.setCurrentText(a34420a_conf.get("rango", "10 V"))
         layout_34420a.addRow("Rango Default:", self.def_rango)
         self.tabs.addTab(tab_34420a, "Agilent 34420A")
+
+        # --- TAB 4: Valores TH2832 ---
+        tab_th2832 = QWidget()
+        layout_th2832 = QFormLayout(tab_th2832)
+        th_conf = self.config.get("th2832", {})
+        
+        self.th_vac = QDoubleSpinBox()
+        self.th_vac.setRange(0.01, 2.0)
+        self.th_vac.setValue(th_conf.get("vac", 0.1))
+        layout_th2832.addRow("Vac Default (Vrms):", self.th_vac)
+        
+        self.th_alc = QCheckBox("ALC Default ON")
+        self.th_alc.setChecked(th_conf.get("alc_on", True))
+        layout_th2832.addRow("Auto Level Control:", self.th_alc)
+        
+        self.th_speed = QComboBox()
+        self.th_speed.addItems(["SLOW", "MED", "FAST"])
+        self.th_speed.setCurrentText(th_conf.get("speed", "MED"))
+        layout_th2832.addRow("Velocidad Default:", self.th_speed)
+        
+        self.th_avg = QSpinBox()
+        self.th_avg.setRange(1, 255)
+        self.th_avg.setValue(th_conf.get("avg", 1))
+        layout_th2832.addRow("Promedios Default:", self.th_avg)
+        
+        self.th_rsou = QComboBox()
+        self.th_rsou.addItems(["100", "30"])
+        self.th_rsou.setCurrentText(str(th_conf.get("rsou", "100")))
+        layout_th2832.addRow("Rsou Default (Ω):", self.th_rsou)
+        
+        self.th_rango = QComboBox()
+        self.th_rango.addItems(["AUTO", "3", "10", "30", "100", "300", "1000", "3000", "10000", "30000", "100000"])
+        self.th_rango.setCurrentText(th_conf.get("rango", "AUTO"))
+        layout_th2832.addRow("Rango Default:", self.th_rango)
+        
+        self.th_delay = QDoubleSpinBox()
+        self.th_delay.setRange(0.0, 60.0)
+        self.th_delay.setValue(th_conf.get("trig_delay", 0.0))
+        layout_th2832.addRow("Trigger Delay Default (s):", self.th_delay)
+        
+        self.tabs.addTab(tab_th2832, "Tonghui TH2832")
         
         main_layout.addWidget(self.tabs)
         
@@ -80,7 +121,6 @@ class ConfiguracionGeneralDialog(QDialog):
         main_layout.addWidget(botones)
         
     def get_config_actualizada(self):
-        """Reconstruye el diccionario JSON con los valores de las cajas."""
         nueva_config = self.config.copy()
         nueva_config["max_current_ma"] = self.input_limite.value()
         nueva_config["k224"] = {
@@ -90,6 +130,16 @@ class ConfiguracionGeneralDialog(QDialog):
         nueva_config["a34420a"] = {
             "nplc": self.def_nplc.currentText(),
             "rango": self.def_rango.currentText()
+        }
+        # <-- AÑADIR ESTO -->
+        nueva_config["th2832"] = {
+            "vac": self.th_vac.value(),
+            "alc_on": self.th_alc.isChecked(),
+            "speed": self.th_speed.currentText(),
+            "avg": self.th_avg.value(),
+            "rsou": self.th_rsou.currentText(),
+            "rango": self.th_rango.currentText(),
+            "trig_delay": self.th_delay.value()
         }
         return nueva_config
 
@@ -155,16 +205,22 @@ class IVMeasurementApp(QMainWindow):
         self.archivo_config = "config.json"
         
         # Diccionario base por si el JSON no existe
+        # Diccionario base por si el JSON no existe
         self.config_app = {
             "directorio_defecto": "",
             "max_current_ma": 105.0,
             "k224": {"ancho_pulso": 0.1, "limite_voltaje": 20.0},
-            "a34420a": {"nplc": "2", "rango": "10 V"}
+            "a34420a": {"nplc": "2", "rango": "10 V"},
+            "th2832": {"vac": 0.1, "alc_on": True, "speed": "MED", "avg": 1, "rsou": "100", "rango": "AUTO", "trig_delay": 0.0} 
         }
         self._cargar_configuracion()
+        
+        # --- AÑADIR ESTA LÍNEA AQUÍ ---
+        self.directorio_defecto = self.config_app.get("directorio_defecto", "")
 
         self.worker = HiloMedicionDual(self.estado_compartido)
-        self.worker_temp = HiloTemperatura(self.estado_compartido) # (Cuando lo conectes)
+        self.worker_temp = HiloTemperatura(self.estado_compartido) 
+        self.worker_is = HiloEspectroscopia(self.estado_compartido) # <-- NUEVO
         
         self._limpiar_datos_graficos()
         self._setup_menu()
@@ -221,20 +277,28 @@ class IVMeasurementApp(QMainWindow):
             self.status_bar.showMessage("Configuración guardada y aplicada.", 4000)
 
     def _aplicar_defaults_a_ui(self):
-        """Inyecta los valores del JSON directamente en las cajas de texto de los paneles."""
         p_k224 = self.dual_inst_tab.params_pane
         i_34420 = self.dual_inst_tab.instant_pane
+        p_th = self.espectroscopia_tab.params_pane # <-- Referencia a TH2832
         
         k224_conf = self.config_app.get("k224", {})
         a34420_conf = self.config_app.get("a34420a", {})
+        th_conf = self.config_app.get("th2832", {}) # <-- Recuperar
         
-        # Aplicar valores K224
         p_k224.ancho_pulso.setValue(k224_conf.get("ancho_pulso", 0.1))
         p_k224.limite_voltaje.setValue(k224_conf.get("limite_voltaje", 20.0))
         
-        # Aplicar valores 34420A
         i_34420.combo_nplc.setCurrentText(a34420_conf.get("nplc", "2"))
         i_34420.combo_rango.setCurrentText(a34420_conf.get("rango", "10 V"))
+
+        # <-- APLICAR TH2832 -->
+        p_th.vac.setValue(th_conf.get("vac", 0.1))
+        p_th.chk_alc.setChecked(th_conf.get("alc_on", True))
+        p_th.combo_speed.setCurrentText(th_conf.get("speed", "MED"))
+        p_th.avg_pts.setValue(th_conf.get("avg", 1))
+        p_th.combo_rsou.setCurrentText(str(th_conf.get("rsou", "100")))
+        p_th.combo_rango.setCurrentText(th_conf.get("rango", "AUTO"))
+        p_th.trig_delay.setValue(th_conf.get("trig_delay", 0.0))
 
     def _aplicar_gobernador(self, max_ma):
         """Bloquea los rangos máximos de las cajas de corriente."""
@@ -250,18 +314,24 @@ class IVMeasurementApp(QMainWindow):
             caja.blockSignals(False)
 
     def _configurar_ruta_defecto(self):
-            """Abre un diálogo para seleccionar la carpeta por defecto para guardar archivos."""
-            directorio = QFileDialog.getExistingDirectory(
-                self,
-                "Seleccionar Carpeta por Defecto",
-                self.directorio_defecto,
-                QFileDialog.Option.ShowDirsOnly
-            )
+        """Abre un diálogo para seleccionar la carpeta por defecto para guardar archivos."""
+        directorio = QFileDialog.getExistingDirectory(
+            self,
+            "Seleccionar Carpeta por Defecto",
+            self.directorio_defecto,
+            QFileDialog.Option.ShowDirsOnly
+        )
+        
+        if directorio:
+            self.directorio_defecto = directorio
             
-            if directorio:
-                self.directorio_defecto = directorio
-                self.status_bar.setStyleSheet("color: #0055ff; font-weight: bold;")
-                self.status_bar.showMessage(f"Ruta por defecto configurada: {self.directorio_defecto}", 5000)
+            # --- AÑADIR ESTAS DOS LÍNEAS ---
+            self.config_app["directorio_defecto"] = directorio
+            self._guardar_configuracion()
+            # -------------------------------
+            
+            self.status_bar.setStyleSheet("color: #0055ff; font-weight: bold;")
+            self.status_bar.showMessage(f"Ruta por defecto configurada: {self.directorio_defecto}", 5000)
 
     def _setup_ui(self):
         central_widget = QWidget()
@@ -275,11 +345,13 @@ class IVMeasurementApp(QMainWindow):
         self.smu_tab = SMUControlTab()
         self.dual_inst_tab = DualInstrumentControlTab()
         self.relajacion_tab = RelajacionTab() 
-        self.temperatura_tab = TemperaturaTab() # <-- NUEVO
+        self.temperatura_tab = TemperaturaTab()
+        self.espectroscopia_tab = EspectroscopiaTab() 
         
+        self.setup_tabs.addTab(self.espectroscopia_tab, "Espectroscopía (TH2832)")
         self.setup_tabs.addTab(self.dual_inst_tab, "Setup: K224 + 34420A")
         self.setup_tabs.addTab(self.relajacion_tab, "Relajación") 
-        self.setup_tabs.addTab(self.temperatura_tab, "Temperatura (LakeShore)") # <-- NUEVO
+        self.setup_tabs.addTab(self.temperatura_tab, "Temperatura (LakeShore)")
         self.setup_tabs.addTab(self.smu_tab, "Setup: B2902A SMU")
         
         main_layout.addWidget(self.setup_tabs)
@@ -287,56 +359,47 @@ class IVMeasurementApp(QMainWindow):
         # ==========================================
         # BOTTOM ROW: The Global Plots 
         # ==========================================
-        # Configuraciones globales de pyqtgraph
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', 'k')
         pg.setConfigOptions(antialias=True)
         
         bottom_row_layout = QHBoxLayout()
-
-        # I-V Plot Pane
+        
+        # --- PANELES NORMALES (I-V, Res, Monitoreo) ---
         self.iv_plot_pane = QGroupBox("Gráfico I-V")
+        self.iv_plot_pane.setMinimumHeight(350) # <-- FORZAR ALTURA
         iv_layout = QVBoxLayout()
         self.iv_plot = pg.PlotWidget(title="Voltaje vs Corriente")
         self._style_plot(self.iv_plot, "Voltaje (V)", "Corriente (mA)")
         self.iv_plot.addLegend()
-        self.iv_curve = self.iv_plot.plot(symbol='o', width=1,
-                                           symbolSize=6, symbolBrush=pg.mkBrush('#0055ff'), name="Canal 1")
-        self.iv_curve_ch2 = self.iv_plot.plot(symbol='s', width=1,
-                                               symbolSize=6, symbolBrush=pg.mkBrush('#ff5500'), name="Canal 2")
+        self.iv_curve = self.iv_plot.plot(symbol='o', width=1, symbolSize=6, symbolBrush=pg.mkBrush('#0055ff'), name="Canal 1")
+        self.iv_curve_ch2 = self.iv_plot.plot(symbol='s', width=1, symbolSize=6, symbolBrush=pg.mkBrush('#ff5500'), name="Canal 2")
         self.iv_last = self.iv_plot.plot(pen=None, symbol='o', symbolSize=10, symbolBrush='g', symbolPen='k')
         self.iv_last_ch2 = self.iv_plot.plot(pen=None, symbol='s', symbolSize=10, symbolBrush='g', symbolPen='k')
         iv_layout.addWidget(self.iv_plot)
         self.iv_plot_pane.setLayout(iv_layout)
         bottom_row_layout.addWidget(self.iv_plot_pane)
 
-        # Resistance Plot Pane
         self.res_plot_pane = QGroupBox("Gráfico Resistencia")
+        self.res_plot_pane.setMinimumHeight(350) # <-- FORZAR ALTURA
         res_layout = QVBoxLayout()
         self.res_plot = pg.PlotWidget(title="Resistencia vs Corriente")
         self._style_plot(self.res_plot, "Corriente (mA)", "Resistencia (Ω)")
         self.res_plot.addLegend()
-        
-        # Curvas para canal 1 y canal 2
-        self.rinst_curve = self.res_plot.plot(pen=pg.mkPen(color='#0055ff', width=1), 
-                                              symbol='o', symbolSize=5, symbolBrush='#0055ff', name="Rinst Ch1")
-        self.rinst_curve_ch2 = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1), 
-                                                  symbol='s', symbolSize=5, symbolBrush='#ff5500', name="Rinst Ch2")
-        self.rrem_curve = self.res_plot.plot(pen=pg.mkPen(color='#0055ff', width=1, style=Qt.PenStyle.DashLine), 
-                                             symbol='o', symbolSize=5, symbolBrush='#0055ff', name="Rrem Ch1")
-        self.rrem_curve_ch2 = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1, style=Qt.PenStyle.DashLine), 
-                                                 symbol='s', symbolSize=5, symbolBrush='#ff5500', name="Rrem Ch2")
+        self.rinst_curve = self.res_plot.plot(pen=pg.mkPen(color='#0055ff', width=1), symbol='o', symbolSize=5, symbolBrush='#0055ff', name="Rinst Ch1")
+        self.rinst_curve_ch2 = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1), symbol='s', symbolSize=5, symbolBrush='#ff5500', name="Rinst Ch2")
+        self.rrem_curve = self.res_plot.plot(pen=pg.mkPen(color='#0055ff', width=1, style=Qt.PenStyle.DashLine), symbol='o', symbolSize=5, symbolBrush='#0055ff', name="Rrem Ch1")
+        self.rrem_curve_ch2 = self.res_plot.plot(pen=pg.mkPen(color='#ff5500', width=1, style=Qt.PenStyle.DashLine), symbol='s', symbolSize=5, symbolBrush='#ff5500', name="Rrem Ch2")
         self.rinst_last = self.res_plot.plot(pen=None, symbol='o', symbolSize=10, symbolBrush='r', symbolPen='k')
         self.rinst_last_ch2 = self.res_plot.plot(pen=None, symbol='s', symbolSize=10, symbolBrush='r', symbolPen='k')
-        
         self.rrem_last = self.res_plot.plot(pen=None, symbol='o', symbolSize=10, symbolBrush='r', symbolPen='k')
         self.rrem_last_ch2 = self.res_plot.plot(pen=None, symbol='s', symbolSize=10, symbolBrush='r', symbolPen='k')
         res_layout.addWidget(self.res_plot)
         self.res_plot_pane.setLayout(res_layout)
         bottom_row_layout.addWidget(self.res_plot_pane)
 
-        # Voltage vs Time Plot Pane
         self.vt_plot_pane = QGroupBox("Monitoreo Temporal")
+        self.vt_plot_pane.setMinimumHeight(350) # <-- FORZAR ALTURA
         vt_layout = QVBoxLayout()
         self.vt_plot = pg.PlotWidget(title="Voltaje vs Tiempo")
         self._style_plot(self.vt_plot, "Tiempo (min)", "Voltaje (V)")
@@ -347,12 +410,73 @@ class IVMeasurementApp(QMainWindow):
         self.vt_plot_pane.setLayout(vt_layout)
         bottom_row_layout.addWidget(self.vt_plot_pane)
 
-        main_layout.addLayout(bottom_row_layout)
+        # --- PANELES ESPECTROSCOPÍA (Ocultos por defecto) ---
+        self.nyquist_pane = QGroupBox("Gráfico de Nyquist")
+        self.nyquist_pane.setMinimumHeight(350) # <-- FORZAR ALTURA
+        nyq_layout = QVBoxLayout()
+        self.nyquist_plot = pg.PlotWidget()
+        self.nyquist_plot.setLabel('bottom', "Z' (Real) [Ω]")
+        self.nyquist_plot.setLabel('left', "-Z'' (Imaginario) [Ω]")
+        self.nyquist_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.nyquist_plot.setAspectLocked(True, ratio=1) 
+        self.nyquist_curve = self.nyquist_plot.plot(symbol='o', pen=None, symbolSize=5, symbolBrush='b')
+        nyq_layout.addWidget(self.nyquist_plot)
+        self.nyquist_pane.setLayout(nyq_layout)
+        bottom_row_layout.addWidget(self.nyquist_pane)
+        self.nyquist_pane.hide()
+
+        self.bode_pane = QGroupBox("Gráfico de Bode")
+        self.bode_pane.setMinimumHeight(350) # <-- FORZAR ALTURA
+        bode_layout = QVBoxLayout()
+        self.bode_widget = pg.GraphicsLayoutWidget()
         
-        # Status Bar para errores y mensajes
+        self.bode_mag_plot = self.bode_widget.addPlot(row=0, col=0)
+        self.bode_mag_plot.setLogMode(x=True, y=True)
+        self.bode_mag_plot.setLabel('left', "|Z| [Ω]")
+        self.bode_mag_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.bode_mag_curve = self.bode_mag_plot.plot(pen=pg.mkPen('b', width=2))
+        
+        self.bode_pha_plot = self.bode_widget.addPlot(row=1, col=0)
+        self.bode_pha_plot.setLogMode(x=True, y=False)
+        self.bode_pha_plot.setLabel('left', "Phase [°]")
+        self.bode_pha_plot.setLabel('bottom', "Frequency [Hz]")
+        self.bode_pha_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.bode_pha_curve = self.bode_pha_plot.plot(pen=pg.mkPen('r', width=2))
+        self.bode_pha_plot.setXLink(self.bode_mag_plot)
+        
+        bode_layout.addWidget(self.bode_widget)
+        self.bode_pane.setLayout(bode_layout)
+        bottom_row_layout.addWidget(self.bode_pane)
+        self.bode_pane.hide()
+
+        # ==========================================
+        # CRÍTICO: EXPANDIR LOS GRÁFICOS
+        # ==========================================
+        # Se añade 'stretch=0' a las pestañas y 'stretch=1' a los gráficos. 
+        # Esto le ordena a Qt que todos los pixeles libres de la pantalla vayan a los gráficos.
+        main_layout.addWidget(self.setup_tabs, stretch=0)
+        main_layout.addLayout(bottom_row_layout, stretch=1)
+        
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Listo para medir.")
+
+    def _al_cambiar_pestana(self, index):
+        """Muestra u oculta los gráficos dependiendo del modo activo."""
+        nombre_pestana = self.setup_tabs.tabText(index)
+        es_is = "Espectroscopía" in nombre_pestana
+        
+        self.iv_plot_pane.setVisible(not es_is)
+        self.res_plot_pane.setVisible(not es_is)
+        self.vt_plot_pane.setVisible(not es_is)
+        
+        self.nyquist_pane.setVisible(es_is)
+        self.bode_pane.setVisible(es_is)
+        
+        if nombre_pestana == "Relajación":
+            self.res_plot.setLabel('bottom', "Tiempo (min)")
+        elif "K224" in nombre_pestana:
+            self.res_plot.setLabel('bottom', "Corriente (mA)")
 
     def _style_plot(self, plot_widget, x_label, y_label):
         """Aplica estilos consistentes a los gráficos."""
@@ -400,6 +524,16 @@ class IVMeasurementApp(QMainWindow):
         self.setup_tabs.currentChanged.connect(self._validar_tiempos)
         self.setup_tabs.currentChanged.connect(self._al_cambiar_pestana)
         self._setup_conexiones_temp()
+        self._setup_conexiones_is() # <--- ¡ESTA ES LA LÍNEA QUE FALTABA!
+
+        t_pane = self.temperatura_tab.params_pane
+        t_pane.btn_medir.clicked.connect(self._iniciar_medicion_temp)
+        t_pane.btn_detencion.clicked.connect(self.worker_temp.detener_medicion)
+        
+        # NUEVA CONEXIÓN PARA CAMBIOS EN VIVO
+        t_pane.btn_aplicar.clicked.connect(self._sincronizar_parametros_temp) 
+        
+        self.worker_temp.datos_temp.connect(self._actualizar_graficos_termodinamicos)
 
     # Añadir a _setup_connections(self):
     def _setup_conexiones_temp(self):
@@ -418,7 +552,6 @@ class IVMeasurementApp(QMainWindow):
         t_pane = self.temperatura_tab.params_pane
         i_pane = self.temperatura_tab.instant_pane
         
-        # Recolectar la tabla de pasos
         tabla_T = []
         for row in range(t_pane.tabla_pasos.rowCount()):
             tabla_T.append({
@@ -430,6 +563,18 @@ class IVMeasurementApp(QMainWindow):
         if not tabla_T:
             self._mostrar_error("La tabla de rampas está vacía.")
             return
+
+        # --- Reemplazo del TODO: Lógica de Guardado de Archivo ---
+        ruta_inicial = self.directorio_defecto
+        if ruta_inicial:
+            import time
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            ruta_inicial = os.path.join(ruta_inicial, f"temperatura_{timestamp}")
+
+        ruta_archivo, _ = QFileDialog.getSaveFileName(self, "Guardar Rampa de Temperatura", ruta_inicial, "CSV Files (*.csv)")
+        if not ruta_archivo: return
+        if not ruta_archivo.lower().endswith('.csv'): ruta_archivo += '.csv'
+        # ---------------------------------------------------------
             
         self.estado_compartido.update({
             'tabla_T': tabla_T,
@@ -445,15 +590,81 @@ class IVMeasurementApp(QMainWindow):
             'ch2_activado': i_pane.btn_ch2_toggle.isChecked(),
             'nplc': i_pane.combo_nplc.currentText(),
             'rango': i_pane.combo_rango.currentText(),
-            # TODO: Add CSV File Path Request here (similar to _iniciar_medicion)
+            'ruta_archivo': ruta_archivo
         })
         
-        # Limpiar arrays de temperatura (Deberás inicializarlos en _limpiar_datos_graficos)
         self.data_t_temp = []
         self.data_T_act = []
         self.data_T_set = []
         
         self.worker_temp.iniciar_medicion()
+
+
+    def _iniciar_medicion_is(self):
+        if self.worker_is.corriendo: return
+        
+        pane = self.espectroscopia_tab.params_pane
+        
+        # 1. Parsear Lógica de Vdc (Fijo vs Barrido)
+        if pane.chk_vdc_sweep.isChecked():
+            lista_vdc = []
+            if pane.tabla_vdc.rowCount() == 0:
+                self._mostrar_error("La tabla de Vdc está vacía para el barrido.")
+                return
+            for row in range(pane.tabla_vdc.rowCount()):
+                try: 
+                    v = float(pane.tabla_vdc.item(row, 0).text())
+                    lista_vdc.append(v)
+                except ValueError: 
+                    pass
+        else:
+            # Si no se usa la lista, se envía el valor fijo ingresado
+            lista_vdc = [pane.vdc_fijo.value()]
+
+        # 2. Parsear Frecuencias
+        lista_freq = []
+        if pane.tabla_freq.rowCount() == 0:
+            self._mostrar_error("La tabla de frecuencias está vacía.")
+            return
+            
+        for row in range(pane.tabla_freq.rowCount()):
+            try: 
+                f = float(pane.tabla_freq.item(row, 0).text())
+                lista_freq.append(f)
+            except ValueError: 
+                pass
+
+        # 3. Guardar Archivo
+        ruta_inicial = self.directorio_defecto
+        if ruta_inicial:
+            import time
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            ruta_inicial = os.path.join(ruta_inicial, f"espectroscopia_{timestamp}")
+
+        ruta_archivo, _ = QFileDialog.getSaveFileName(self, "Guardar Espectroscopía", ruta_inicial, "CSV Files (*.csv)")
+        if not ruta_archivo: return
+        if not ruta_archivo.lower().endswith('.csv'): ruta_archivo += '.csv'
+
+        self.estado_compartido.update({
+            'lista_vdc': lista_vdc,
+            'frecuencias': lista_freq,
+            'vac': pane.vac.value(),
+            'alc_on': pane.chk_alc.isChecked(),
+            'speed': pane.combo_speed.currentText(),
+            'avg': pane.avg_pts.value(),
+            'rsou': int(pane.combo_rsou.currentText()),
+            'rango': pane.combo_rango.currentText(),
+            'trig_delay': pane.trig_delay.value(),
+            'ruta_archivo_is': ruta_archivo
+        })
+        
+        self.data_is_f = []
+        self.data_is_r = []
+        self.data_is_x_neg = [] 
+        self.data_is_z = []
+        self.data_is_theta = []
+        
+        self.worker_is.iniciar_medicion()
 
     def _actualizar_graficos_termodinamicos(self, t_min, T_act, T_set, pot, v_motor):
         """Actualiza laUI durante la rampa/estabilización (sin medir resistencia aún)."""
@@ -482,15 +693,123 @@ class IVMeasurementApp(QMainWindow):
         self.data_i_rinst.append(T_act) # Usamos el eje X (Corriente) para guardar Temperatura
         self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
         self.res_plot.setLabel('bottom', "Temperatura (K)")
-        
 
     def _al_cambiar_pestana(self, index):
-        """Cambia dinámicamente el eje X del gráfico de resistencia según el modo."""
+        """Muestra u oculta los gráficos dependiendo del modo activo."""
         nombre_pestana = self.setup_tabs.tabText(index)
+        es_is = "Espectroscopía" in nombre_pestana
+        
+        self.iv_plot_pane.setVisible(not es_is)
+        self.res_plot_pane.setVisible(not es_is)
+        self.vt_plot_pane.setVisible(not es_is)
+        
+        self.nyquist_pane.setVisible(es_is)
+        self.bode_pane.setVisible(es_is)
+        
         if nombre_pestana == "Relajación":
             self.res_plot.setLabel('bottom', "Tiempo (min)")
         elif "K224" in nombre_pestana:
             self.res_plot.setLabel('bottom', "Corriente (mA)")
+
+    # Llama a esto desde tu _setup_connections original
+    def _setup_conexiones_is(self):
+        pane = self.espectroscopia_tab.params_pane
+        pane.btn_medir.clicked.connect(self._iniciar_medicion_is)
+        pane.btn_detencion.clicked.connect(self.worker_is.detener_medicion)
+        
+        self.worker_is.datos_is.connect(self._actualizar_graficos_is)
+        self.worker_is.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
+        self.worker_is.error_detectado.connect(self._mostrar_error)
+
+    def _iniciar_medicion_is(self):
+        if self.worker_is.corriendo: return
+        
+        pane = self.espectroscopia_tab.params_pane
+        
+        # 1. Parsear Tabla Expansiva de Vdc
+        lista_vdc = []
+        if pane.tabla_vdc.rowCount() == 0:
+            lista_vdc = [0.0] # Fallback seguro
+        else:
+            for row in range(pane.tabla_vdc.rowCount()):
+                try:
+                    v = float(pane.tabla_vdc.item(row, 0).text())
+                    lista_vdc.append(v)
+                except ValueError:
+                    pass
+
+        # 2. Parsear Tabla Expansiva de Frecuencias
+        lista_freq = []
+        if pane.tabla_freq.rowCount() == 0:
+            self._mostrar_error("La tabla de frecuencias está vacía.")
+            return
+            
+        for row in range(pane.tabla_freq.rowCount()):
+            try:
+                f = float(pane.tabla_freq.item(row, 0).text())
+                lista_freq.append(f)
+            except ValueError:
+                pass
+
+        # 3. Guardar Archivo (Con Timestamp)
+        ruta_inicial = self.directorio_defecto
+        if ruta_inicial:
+            import time
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            ruta_inicial = os.path.join(ruta_inicial, f"espectroscopia_{timestamp}")
+
+        ruta_archivo, _ = QFileDialog.getSaveFileName(self, "Guardar Espectroscopía", ruta_inicial, "CSV Files (*.csv)")
+        if not ruta_archivo: return
+        if not ruta_archivo.lower().endswith('.csv'): ruta_archivo += '.csv'
+
+        self.estado_compartido.update({
+            'lista_vdc': lista_vdc,
+            'frecuencias': lista_freq,
+            'vac': pane.vac.value(),
+            'alc_on': pane.chk_alc.isChecked(),
+            'speed': pane.combo_speed.currentText(),
+            'avg': pane.avg_pts.value(),
+            'rsou': int(pane.combo_rsou.currentText()),
+            'rango': pane.combo_rango.currentText(),
+            'trig_delay': pane.trig_delay.value(),
+            'ruta_archivo_is': ruta_archivo
+        })
+        
+        self.data_is_f = []
+        self.data_is_r = []
+        self.data_is_x_neg = [] 
+        self.data_is_z = []
+        self.data_is_theta = []
+        
+        self.worker_is.iniciar_medicion()
+
+    # Actualizar la firma para recibir el status
+    def _actualizar_graficos_is(self, vdc, freq, r, x, z_mag, theta_deg, t_min, status):
+        # Tracking del Status Byte
+        if status != 0:
+            errores = {
+                -1: "Buffer vacío",
+                1: "LCR Analog Unbalance",
+                2: "Fallo de A/D Converter",
+                3: "Sobrecarga de Fuente de Señal",
+                4: "Fallo de ALC (No se puede mantener Voltaje Constante)"
+            }
+            msg = errores.get(status, f"Error desconocido ({status})")
+            self.status_bar.setStyleSheet("background-color: #ff9800; color: black; font-weight: bold;")
+            self.status_bar.showMessage(f"⚠ ALERTA LCR (Freq: {freq}Hz): {msg}", 4000)
+        else:
+            self.status_bar.setStyleSheet("")
+            self.status_bar.showMessage(f"IS Corriendo: {vdc} Vdc | {freq:.1f} Hz")
+
+        self.data_is_f.append(freq)
+        self.data_is_r.append(r)
+        self.data_is_x_neg.append(-x) 
+        self.data_is_z.append(z_mag)
+        self.data_is_theta.append(theta_deg)
+        
+        self.nyquist_curve.setData(self.data_is_r, self.data_is_x_neg)
+        self.bode_mag_curve.setData(self.data_is_f, self.data_is_z)
+        self.bode_pha_curve.setData(self.data_is_f, self.data_is_theta)
 
     def _limpiar_datos_graficos(self):
         self.data_t = []
@@ -638,6 +957,44 @@ class IVMeasurementApp(QMainWindow):
         self.estado_compartido.update(nuevo_estado)
         self.status_bar.setStyleSheet("") 
         self.status_bar.showMessage(f"Parámetros ({nombre_pestana}) actualizados.", 3000)
+
+    # NUEVA FUNCIÓN DE SINCRONIZACIÓN
+    def _sincronizar_parametros_temp(self):
+        """Actualiza los parámetros del hilo de temperatura en vivo sin interrumpirlo."""
+        t_pane = self.temperatura_tab.params_pane
+        i_pane = self.temperatura_tab.instant_pane
+        
+        nuevo_estado = {
+            'mhi': t_pane.motor_max.value(),
+            'mlo': t_pane.motor_min.value(),
+            'i_bias': t_pane.i_bias.value(),
+            'vlim': t_pane.vlim.value(),
+            'N_stat': t_pane.n_stat.value(),
+            'auto_rango_i': t_pane.chk_auto_rango.isChecked(),
+            'v_scale_max': t_pane.v_max.value(),
+            'v_scale_min': t_pane.v_min.value(),
+            'motor_manual': t_pane.chk_motor_manual.isChecked(),
+            'motor_v_manual': t_pane.v_motor_manual.value(),
+            'ch2_activado': i_pane.btn_ch2_toggle.isChecked()
+        }
+        
+        # Extraer PID si el usuario lo tipeó correctamente
+        try:
+            pid_vals = [float(x.strip()) for x in t_pane.pid_input.text().split(',')]
+            if len(pid_vals) == 3:
+                nuevo_estado['pid_p'] = pid_vals[0]
+                nuevo_estado['pid_i'] = pid_vals[1]
+                nuevo_estado['pid_d'] = pid_vals[2]
+                
+                # Si el hilo está corriendo, enviar el comando SCPI inmediatamente al LakeShore
+                if self.worker_temp.corriendo and self.worker_temp.lakeshore.inst:
+                    self.worker_temp.lakeshore.set_pid(pid_vals[0], pid_vals[1], pid_vals[2])
+        except ValueError:
+            pass # Si escriben mal el PID, lo ignoramos para no crashear
+            
+        self.estado_compartido.update(nuevo_estado)
+        self.status_bar.setStyleSheet("")
+        self.status_bar.showMessage("Parámetros de Temperatura actualizados en vivo.", 3000)
 
     def _iniciar_medicion(self):
         if self.worker.corriendo:
