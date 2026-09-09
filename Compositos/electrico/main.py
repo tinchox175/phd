@@ -230,6 +230,7 @@ class IVMeasurementApp(QMainWindow):
         # Aplicar los defaults a la UI inmediatamente al arrancar
         self._aplicar_gobernador(self.config_app["max_current_ma"])
         self._aplicar_defaults_a_ui()
+        self._al_cambiar_pestana(self.setup_tabs.currentIndex())
 
     def _cargar_configuracion(self):
         if os.path.exists(self.archivo_config):
@@ -412,21 +413,21 @@ class IVMeasurementApp(QMainWindow):
 
         # --- PANELES ESPECTROSCOPÍA (Ocultos por defecto) ---
         self.nyquist_pane = QGroupBox("Gráfico de Nyquist")
-        self.nyquist_pane.setMinimumHeight(350) # <-- FORZAR ALTURA
         nyq_layout = QVBoxLayout()
         self.nyquist_plot = pg.PlotWidget()
         self.nyquist_plot.setLabel('bottom', "Z' (Real) [Ω]")
         self.nyquist_plot.setLabel('left', "-Z'' (Imaginario) [Ω]")
         self.nyquist_plot.showGrid(x=True, y=True, alpha=0.3)
         self.nyquist_plot.setAspectLocked(True, ratio=1) 
-        self.nyquist_curve = self.nyquist_plot.plot(symbol='o', pen=None, symbolSize=5, symbolBrush='b')
+        self.nyquist_curve = self.nyquist_plot.plot(symbol='o', pen=None, symbolSize=5, symbolBrush='b', name="CH 1")
+        self.nyquist_curve_ch2 = self.nyquist_plot.plot(symbol='s', pen=None, symbolSize=5, symbolBrush='r', name="CH 2") # <-- NUEVO
+        self.nyquist_plot.addLegend()
         nyq_layout.addWidget(self.nyquist_plot)
         self.nyquist_pane.setLayout(nyq_layout)
         bottom_row_layout.addWidget(self.nyquist_pane)
         self.nyquist_pane.hide()
 
         self.bode_pane = QGroupBox("Gráfico de Bode")
-        self.bode_pane.setMinimumHeight(350) # <-- FORZAR ALTURA
         bode_layout = QVBoxLayout()
         self.bode_widget = pg.GraphicsLayoutWidget()
         
@@ -435,13 +436,15 @@ class IVMeasurementApp(QMainWindow):
         self.bode_mag_plot.setLabel('left', "|Z| [Ω]")
         self.bode_mag_plot.showGrid(x=True, y=True, alpha=0.3)
         self.bode_mag_curve = self.bode_mag_plot.plot(pen=pg.mkPen('b', width=2))
+        self.bode_mag_curve_ch2 = self.bode_mag_plot.plot(pen=pg.mkPen('r', width=2, style=Qt.PenStyle.DashLine)) # <-- NUEVO
         
         self.bode_pha_plot = self.bode_widget.addPlot(row=1, col=0)
         self.bode_pha_plot.setLogMode(x=True, y=False)
         self.bode_pha_plot.setLabel('left', "Phase [°]")
         self.bode_pha_plot.setLabel('bottom', "Frequency [Hz]")
         self.bode_pha_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.bode_pha_curve = self.bode_pha_plot.plot(pen=pg.mkPen('r', width=2))
+        self.bode_pha_curve = self.bode_pha_plot.plot(pen=pg.mkPen('b', width=2))
+        self.bode_pha_curve_ch2 = self.bode_pha_plot.plot(pen=pg.mkPen('r', width=2, style=Qt.PenStyle.DashLine)) # <-- NUEVO
         self.bode_pha_plot.setXLink(self.bode_mag_plot)
         
         bode_layout.addWidget(self.bode_widget)
@@ -454,6 +457,11 @@ class IVMeasurementApp(QMainWindow):
         # ==========================================
         # Se añade 'stretch=0' a las pestañas y 'stretch=1' a los gráficos. 
         # Esto le ordena a Qt que todos los pixeles libres de la pantalla vayan a los gráficos.
+        self.iv_plot_pane.setMinimumHeight(350)
+        self.res_plot_pane.setMinimumHeight(350)
+        self.vt_plot_pane.setMinimumHeight(350)
+        self.nyquist_pane.setMinimumHeight(350)
+        self.bode_pane.setMinimumHeight(350)
         main_layout.addWidget(self.setup_tabs, stretch=0)
         main_layout.addLayout(bottom_row_layout, stretch=1)
         
@@ -655,14 +663,15 @@ class IVMeasurementApp(QMainWindow):
             'rsou': int(pane.combo_rsou.currentText()),
             'rango': pane.combo_rango.currentText(),
             'trig_delay': pane.trig_delay.value(),
+            'ruta_archivo_is': ruta_archivo,
+            'usa_matriz': pane.chk_matriz.isChecked(),
+            'matriz_ch1': pane.matriz_ch1.value(),
+            'matriz_ch2': pane.matriz_ch2.value(),
             'ruta_archivo_is': ruta_archivo
         })
         
-        self.data_is_f = []
-        self.data_is_r = []
-        self.data_is_x_neg = [] 
-        self.data_is_z = []
-        self.data_is_theta = []
+        self.data_is_f, self.data_is_r, self.data_is_x_neg, self.data_is_z, self.data_is_theta = [], [], [], [], []
+        self.data_is_r_ch2, self.data_is_x_neg_ch2, self.data_is_z_ch2, self.data_is_theta_ch2 = [], [], [], []
         
         self.worker_is.iniciar_medicion()
 
@@ -784,8 +793,7 @@ class IVMeasurementApp(QMainWindow):
         self.worker_is.iniciar_medicion()
 
     # Actualizar la firma para recibir el status
-    def _actualizar_graficos_is(self, vdc, freq, r, x, z_mag, theta_deg, t_min, status):
-        # Tracking del Status Byte
+    def _actualizar_graficos_is(self, vdc, freq, r1, x1, z1, theta1, r2, x2, z2, theta2, t_min, status):        # Tracking del Status Byte
         if status != 0:
             errores = {
                 -1: "Buffer vacío",
@@ -799,42 +807,56 @@ class IVMeasurementApp(QMainWindow):
             self.status_bar.showMessage(f"⚠ ALERTA LCR (Freq: {freq}Hz): {msg}", 4000)
         else:
             self.status_bar.setStyleSheet("")
-            self.status_bar.showMessage(f"IS Corriendo: {vdc} Vdc | {freq:.1f} Hz")
+            self.status_bar.showMessage(f"IE Corriendo: {vdc} Vdc | {freq:.1f} Hz")
 
         self.data_is_f.append(freq)
-        self.data_is_r.append(r)
-        self.data_is_x_neg.append(-x) 
-        self.data_is_z.append(z_mag)
-        self.data_is_theta.append(theta_deg)
         
+        # Canal 1
+        self.data_is_r.append(r1)
+        self.data_is_x_neg.append(-x1) 
+        self.data_is_z.append(z1)
+        self.data_is_theta.append(theta1)
+        
+        # Canal 2
+        if not math.isnan(r2):
+            self.data_is_r_ch2.append(r2)
+            self.data_is_x_neg_ch2.append(-x2)
+            self.data_is_z_ch2.append(z2)
+            self.data_is_theta_ch2.append(theta2)
+        
+        # Render
         self.nyquist_curve.setData(self.data_is_r, self.data_is_x_neg)
         self.bode_mag_curve.setData(self.data_is_f, self.data_is_z)
         self.bode_pha_curve.setData(self.data_is_f, self.data_is_theta)
+        
+        if self.data_is_r_ch2:
+            self.nyquist_curve_ch2.setData(self.data_is_r_ch2, self.data_is_x_neg_ch2)
+            self.bode_mag_curve_ch2.setData(self.data_is_f, self.data_is_z_ch2)
+            self.bode_pha_curve_ch2.setData(self.data_is_f, self.data_is_theta_ch2)
 
     def _limpiar_datos_graficos(self):
-        self.data_t = []
-        self.data_v = []
-        self.data_i = []
-        self.data_t_ch2 = []
-        self.data_v_ch2 = []
-        self.data_i_ch2 = []
+        # Arrays I-V y Termodinámicos
+        self.data_t, self.data_v, self.data_i = [], [], []
+        self.data_t_ch2, self.data_v_ch2, self.data_i_ch2 = [], [], []
         
-        # Reset de las listas de datos
-        self.data_i_rinst = []
-        self.data_rinst = []
-        self.data_t_rinst = [] # NUEVO Eje X de Tiempo
+        self.data_i_rinst, self.data_rinst, self.data_t_rinst = [], [], []
+        self.data_i_rrem, self.data_rrem, self.data_t_rrem = [], [], []
+        
+        self.data_i_rinst_ch2, self.data_rinst_ch2, self.data_t_rinst_ch2 = [], [], []
+        self.data_i_rrem_ch2, self.data_rrem_ch2, self.data_t_rrem_ch2 = [], [], []
 
-        self.data_i_rrem = []
-        self.data_rrem = []
-        self.data_t_rrem = []  # NUEVO Eje X de Tiempo
+        # Arrays Espectroscopía de Impedancia (Canal 1)
+        self.data_is_f = []
+        self.data_is_r = []
+        self.data_is_x_neg = [] 
+        self.data_is_z = []
+        self.data_is_theta = []
 
-        self.data_i_rinst_ch2 = []
-        self.data_rinst_ch2 = []
-        self.data_t_rinst_ch2 = [] # NUEVO Eje X de Tiempo
-
-        self.data_i_rrem_ch2 = []
-        self.data_rrem_ch2 = []
-        self.data_t_rrem_ch2 = []  # NUEVO Eje X de Tiempo
+        # Arrays Espectroscopía de Impedancia (Canal 2)
+        self.data_is_r_ch2 = []
+        self.data_is_x_neg_ch2 = []
+        self.data_is_z_ch2 = []
+        self.data_is_theta_ch2 = []
 
     # ==========================================
     # LÓGICA DE CONTROL (SLOTS)
@@ -1072,7 +1094,7 @@ class IVMeasurementApp(QMainWindow):
 
     def _cargar_medicion(self):
         """Abre un diálogo, lee un CSV previo y puebla los gráficos soportando múltiples formatos."""
-        if self.worker.corriendo:
+        if self.worker.corriendo or self.worker_is.corriendo or self.worker_temp.corriendo:
             self.status_bar.showMessage("No se puede cargar un archivo mientras se está midiendo.", 4000)
             return
 
@@ -1095,47 +1117,84 @@ class IVMeasurementApp(QMainWindow):
                 for fila in reader:
                     try:
                         t = float(fila.get("Tiempo (min)", float('nan')))
-                        is_smu = False # NUEVO: Bandera para identificar el archivo
+                        is_smu = False
                         
                         # ---------------------------------------------------------
-                        # DETECCIÓN DE FORMATO (Nuevo vs SMU Viejo)
+                        # 1. ESPECTROSCOPÍA DE IMPEDANCIA (IS)
                         # ---------------------------------------------------------
-                        if "I pulso (mA)" in fila:
-                            # FORMATO NUEVO (K224 + 34420A)
+                        if "Freq (Hz)" in fila:
+                            f_val = float(fila["Freq (Hz)"])
+                            
+                            if "R_ch1 (Ohm)" in fila: # Formato Nuevo (Matriz)
+                                r1 = float(fila["R_ch1 (Ohm)"])
+                                x1 = float(fila["X_ch1 (Ohm)"])
+                                z1 = float(fila["|Z|_ch1 (Ohm)"])
+                                t1 = float(fila["Theta_ch1 (Deg)"])
+                                
+                                if not math.isnan(r1):
+                                    self.data_is_f.append(f_val)
+                                    self.data_is_r.append(r1)
+                                    self.data_is_x_neg.append(-x1)
+                                    self.data_is_z.append(z1)
+                                    self.data_is_theta.append(t1)
+                                    
+                                r2_str = fila.get("R_ch2 (Ohm)", "nan")
+                                if r2_str.strip() and r2_str.strip().lower() != 'nan':
+                                    self.data_is_r_ch2.append(float(r2_str))
+                                    self.data_is_x_neg_ch2.append(-float(fila["X_ch2 (Ohm)"]))
+                                    self.data_is_z_ch2.append(float(fila["|Z|_ch2 (Ohm)"]))
+                                    self.data_is_theta_ch2.append(float(fila["Theta_ch2 (Deg)"]))
+                                    
+                            elif "R (Ohm)" in fila: # Formato Viejo (Sin Matriz)
+                                r1 = float(fila["R (Ohm)"])
+                                x1 = float(fila["X (Ohm)"])
+                                z1 = float(fila["|Z| (Ohm)"])
+                                t1 = float(fila["Theta (Deg)"])
+                                
+                                if not math.isnan(r1):
+                                    self.data_is_f.append(f_val)
+                                    self.data_is_r.append(r1)
+                                    self.data_is_x_neg.append(-x1)
+                                    self.data_is_z.append(z1)
+                                    self.data_is_theta.append(t1)
+                            
+                            continue # CRÍTICO: Salta al siguiente loop, evita lógica I-V
+                            
+                        # ---------------------------------------------------------
+                        # 2. I-V / RELAJACIÓN (Formato Nuevo K224 + 34420A)
+                        # ---------------------------------------------------------
+                        elif "I pulso (mA)" in fila:
                             i_inst = float(fila["I pulso (mA)"])
                             r1_inst = float(fila["Rinst 1 (Ohm)"])
                             r2_inst = float(fila.get("Rinst 2 (Ohm)", float('nan')))
                             
+                        # ---------------------------------------------------------
+                        # 3. I-V (Formato Viejo B2902A SMU)
+                        # ---------------------------------------------------------
                         elif "I pulso(mA)" in fila:
-                            # FORMATO VIEJO (B2902A SMU)
-                            is_smu = True # Activamos la bandera
+                            is_smu = True 
                             i_inst = float(fila["Iinst 1 (mA)"]) 
                             r1_inst = float(fila["Rinst 1(Ohm)"])
                             r2_inst = float(fila.get("Rinst 2(Ohm)", float('nan')))
                             
                         else:
-                            # Fila irreconocible
-                            continue
+                            continue # Ignorar si la fila no coincide con nada
 
-                        # Columnas compartidas
+                        # Variables I-V compartidas
                         v1_inst = float(fila.get("Vinst 1 (V)", float('nan')))
                         r1_bias = float(fila.get("Rrem 1 (Ohm)", float('nan')))
                         v2_inst = float(fila.get("Vinst 2 (V)", float('nan')))
                         r2_bias = float(fila.get("Rrem 2 (Ohm)", float('nan')))
                         
-                        # ---------------------------------------------------------
-                        # NUEVO: FILTRO DE BASURA (Solo para archivos SMU)
-                        # Si el valor absoluto supera 1e30, lo convertimos en NaN
-                        # ---------------------------------------------------------
                         if is_smu:
                             if abs(v2_inst) > 1e30: v2_inst = float('nan')
                             if abs(r2_inst) > 1e30: r2_inst = float('nan')
                             if abs(r2_bias) > 1e30: r2_bias = float('nan')
                             
                     except ValueError:
-                        continue # Ignorar si hay texto corrupto
+                        continue 
                     
-                    # Poblar datos del pulso principal
+                    # Carga de datos I-V
                     if not math.isnan(t) and not math.isnan(i_inst):
                         self.data_t.append(t)
                         self.data_i.append(i_inst)
@@ -1149,7 +1208,6 @@ class IVMeasurementApp(QMainWindow):
                         self.data_i_rrem.append(i_inst)
                         self.data_rrem.append(r1_bias)
                         
-                    # Poblar datos del Canal 2 si existen (y si no fueron limpiados por el filtro)
                     if not math.isnan(v2_inst):
                         self.data_t_ch2.append(t)
                         self.data_v_ch2.append(v2_inst)
@@ -1163,7 +1221,7 @@ class IVMeasurementApp(QMainWindow):
                         self.data_i_rrem_ch2.append(i_inst)
                         self.data_rrem_ch2.append(r2_bias)
 
-            # Actualizar todos los gráficos con los arrays completos
+            # --- RENDER: Actualizar todos los gráficos I-V ---
             self.iv_curve.setData(self.data_v, self.data_i)
             self.vt_curve.setData(self.data_t, self.data_v)
             self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
@@ -1174,7 +1232,22 @@ class IVMeasurementApp(QMainWindow):
             self.rinst_curve_ch2.setData(self.data_i_rinst_ch2, self.data_rinst_ch2)
             self.rrem_curve_ch2.setData(self.data_i_rrem_ch2, self.data_rrem_ch2)
             
-            # Limpiar los puntos rojos de rastreo al cargar datos históricos
+            # --- RENDER: Actualizar Gráficos de Espectroscopía ---
+            self.nyquist_curve.setData(self.data_is_r, self.data_is_x_neg)
+            self.bode_mag_curve.setData(self.data_is_f, self.data_is_z)
+            self.bode_pha_curve.setData(self.data_is_f, self.data_is_theta)
+            
+            if len(self.data_is_r_ch2) > 0:
+                self.nyquist_curve_ch2.setData(self.data_is_r_ch2, self.data_is_x_neg_ch2)
+                self.bode_mag_curve_ch2.setData(self.data_is_f, self.data_is_z_ch2)
+                self.bode_pha_curve_ch2.setData(self.data_is_f, self.data_is_theta_ch2)
+            else:
+                # Si el archivo no tiene CH2, vaciar las curvas rojas
+                self.nyquist_curve_ch2.setData([], [])
+                self.bode_mag_curve_ch2.setData([], [])
+                self.bode_pha_curve_ch2.setData([], [])
+            
+            # Limpiar cursores
             self.iv_last.setData([], [])
             self.iv_last_ch2.setData([], [])
             self.rinst_last.setData([], [])

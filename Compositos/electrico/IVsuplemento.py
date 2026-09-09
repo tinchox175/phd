@@ -847,79 +847,82 @@ class ControlEspectroscopiaPane(QGroupBox):
         main_layout = QHBoxLayout(self) # Split principal: Izquierda / Derecha
 
         # ==========================================
-        # MITAD IZQUIERDA: Paneles Verticales
+        # MITAD IZQUIERDA: Paneles Verticales (Grid de 3 Columnas)
         # ==========================================
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
         left_layout.setContentsMargins(0, 0, 10, 0)
         
-        # --- 1. Generadores de Barridos (Frecuencia y Vdc fusionados) ---
-        grp_barridos = QGroupBox("Generadores de Barridos")
-        l_bar = QGridLayout(grp_barridos)
+        # --- 1. Generador de Frecuencias ---
+        grp_freq = QGroupBox("Generador de Frecuencias")
+        l_freq = QGridLayout(grp_freq)
         
-        l_bar.addWidget(QLabel("F. Ini (Hz)"), 0, 0)
+        l_freq.addWidget(QLabel("Inicial (Hz):"), 0, 0)
         self.f_ini = QDoubleSpinBox()
         self.f_ini.setRange(20, 200000)
         self.f_ini.setValue(20)
-        l_bar.addWidget(self.f_ini, 0, 1)
+        l_freq.addWidget(self.f_ini, 0, 1)
 
-        l_bar.addWidget(QLabel("F. Fin (Hz)"), 0, 2)
+        l_freq.addWidget(QLabel("Final (Hz):"), 0, 2)
         self.f_fin = QDoubleSpinBox()
         self.f_fin.setRange(20, 200000)
         self.f_fin.setValue(200000)
-        l_bar.addWidget(self.f_fin, 0, 3)
+        l_freq.addWidget(self.f_fin, 0, 3)
 
-        l_bar.addWidget(QLabel("Puntos"), 1, 0)
+        l_freq.addWidget(QLabel("Puntos:"), 0, 4)
         self.f_pts = QSpinBox()
         self.f_pts.setRange(2, 2000)
         self.f_pts.setValue(50)
-        l_bar.addWidget(self.f_pts, 1, 1)
+        l_freq.addWidget(self.f_pts, 0, 5)
 
-        l_bar.addWidget(QLabel("Escala"), 1, 2)
+        l_freq.addWidget(QLabel("Escala:"), 1, 0)
         self.f_escala = QComboBox()
         self.f_escala.addItems(["Log", "Lin"])
-        l_bar.addWidget(self.f_escala, 1, 3)
+        l_freq.addWidget(self.f_escala, 1, 1)
 
         self.btn_add_freq = QPushButton("Añadir a Lista Freq ->")
-        l_bar.addWidget(self.btn_add_freq, 2, 0, 1, 4)
+        l_freq.addWidget(self.btn_add_freq, 1, 2, 1, 4)
+        left_layout.addWidget(grp_freq)
 
-        # Sección Vdc (Alineado y Compacto)
+        # --- 2. Generador de Vdc Bias ---
+        grp_vdc = QGroupBox("Configuración Vdc Bias")
+        l_vdc = QGridLayout(grp_vdc)
+        
         self.chk_vdc_sweep = QCheckBox("Habilitar Barrido Vdc")
         self.chk_vdc_sweep.setChecked(False)
-        l_bar.addWidget(self.chk_vdc_sweep, 3, 0, 1, 2)
+        l_vdc.addWidget(self.chk_vdc_sweep, 0, 0, 1, 3)
         
-        l_bar.addWidget(QLabel("Vdc Fijo (V)"), 3, 2)
+        l_vdc.addWidget(QLabel("Vdc Fijo (V):"), 0, 3)
         self.vdc_fijo = QDoubleSpinBox()
         self.vdc_fijo.setRange(-5.0, 5.0)
         self.vdc_fijo.setValue(0.0)
-        l_bar.addWidget(self.vdc_fijo, 3, 3) # Ocupa 1 sola columna
+        l_vdc.addWidget(self.vdc_fijo, 0, 4, 1, 2)
 
-        l_bar.addWidget(QLabel("V. Ini (V)"), 4, 0)
+        l_vdc.addWidget(QLabel("V Inicial:"), 1, 0)
         self.v_ini = QDoubleSpinBox()
         self.v_ini.setRange(-5.0, 5.0)
-        l_bar.addWidget(self.v_ini, 4, 1)
+        l_vdc.addWidget(self.v_ini, 1, 1)
 
-        l_bar.addWidget(QLabel("V. Fin (V)"), 4, 2)
+        l_vdc.addWidget(QLabel("V Final:"), 1, 2)
         self.v_fin = QDoubleSpinBox()
         self.v_fin.setRange(-5.0, 5.0)
-        l_bar.addWidget(self.v_fin, 4, 3) # Sube de fila para ahorrar espacio
+        l_vdc.addWidget(self.v_fin, 1, 3)
 
-        l_bar.addWidget(QLabel("Paso (V)"), 5, 0)
+        l_vdc.addWidget(QLabel("Paso:"), 1, 4)
         self.v_paso = QDoubleSpinBox()
         self.v_paso.setRange(0.001, 5.0)
         self.v_paso.setValue(0.1)
-        l_bar.addWidget(self.v_paso, 5, 1)
+        l_vdc.addWidget(self.v_paso, 1, 5)
 
         self.btn_add_vdc = QPushButton("Añadir a Lista Vdc ->")
-        l_bar.addWidget(self.btn_add_vdc, 5, 2, 1, 2)
+        l_vdc.addWidget(self.btn_add_vdc, 2, 0, 1, 6)
+        left_layout.addWidget(grp_vdc)
 
-        left_layout.addWidget(grp_barridos)
-
-        # --- 2. Ajustes del LCR (Subwindow) ---
+        # --- 3. Ajustes del LCR ---
         grp_lcr = QGroupBox("Ajustes TH2832")
         l_lcr = QGridLayout(grp_lcr)
         
-        l_lcr.addWidget(QLabel("Vac (Vrms)"), 0, 0)
+        l_lcr.addWidget(QLabel("Vac (Vrms):"), 0, 0)
         self.vac = QDoubleSpinBox()
         self.vac.setRange(0.01, 2.0)
         self.vac.setValue(0.1)
@@ -929,33 +932,54 @@ class ControlEspectroscopiaPane(QGroupBox):
         self.chk_alc.setChecked(True)
         l_lcr.addWidget(self.chk_alc, 0, 2, 1, 2)
 
-        l_lcr.addWidget(QLabel("Velocidad"), 1, 0)
+        l_lcr.addWidget(QLabel("Velocidad:"), 0, 4)
         self.combo_speed = QComboBox()
         self.combo_speed.addItems(["SLOW", "MED", "FAST"])
         self.combo_speed.setCurrentText("MED")
-        l_lcr.addWidget(self.combo_speed, 1, 1)
+        l_lcr.addWidget(self.combo_speed, 0, 5)
 
-        l_lcr.addWidget(QLabel("Avg Pts"), 1, 2)
+        l_lcr.addWidget(QLabel("Avg Pts:"), 1, 0)
         self.avg_pts = QSpinBox()
         self.avg_pts.setRange(1, 255)
         self.avg_pts.setValue(1)
-        l_lcr.addWidget(self.avg_pts, 1, 3)
+        l_lcr.addWidget(self.avg_pts, 1, 1)
 
-        l_lcr.addWidget(QLabel("Rsou (Ω)"), 2, 0)
+        l_lcr.addWidget(QLabel("Rsou (Ω):"), 1, 2)
         self.combo_rsou = QComboBox()
         self.combo_rsou.addItems(["100", "30"])
-        l_lcr.addWidget(self.combo_rsou, 2, 1)
+        l_lcr.addWidget(self.combo_rsou, 1, 3)
 
-        l_lcr.addWidget(QLabel("Rango"), 2, 2)
+        l_lcr.addWidget(QLabel("Rango:"), 1, 4)
         self.combo_rango = QComboBox()
         self.combo_rango.addItems(["AUTO", "3", "10", "30", "100", "300", "1000", "3000", "10000", "30000", "100000"])
-        l_lcr.addWidget(self.combo_rango, 2, 3)
+        l_lcr.addWidget(self.combo_rango, 1, 5)
 
-        l_lcr.addWidget(QLabel("Trig Delay(s)"), 3, 0)
+        l_lcr.addWidget(QLabel("Trig Delay(s):"), 2, 0)
         self.trig_delay = QDoubleSpinBox()
         self.trig_delay.setRange(0.0, 60.0)
-        l_lcr.addWidget(self.trig_delay, 3, 1)
+        l_lcr.addWidget(self.trig_delay, 2, 1)
         left_layout.addWidget(grp_lcr)
+
+        # --- 4. Control Matriz ---
+        grp_matriz = QGroupBox("Control Matriz HP34970A")
+        l_matriz = QGridLayout(grp_matriz)
+        
+        self.chk_matriz = QCheckBox("Usar Matriz (Ch1/Ch2)")
+        self.chk_matriz.setChecked(False)
+        l_matriz.addWidget(self.chk_matriz, 0, 0, 1, 2)
+        
+        l_matriz.addWidget(QLabel("Canal 1:"), 0, 2)
+        self.matriz_ch1 = QSpinBox()
+        self.matriz_ch1.setRange(100, 999)
+        self.matriz_ch1.setValue(212)
+        l_matriz.addWidget(self.matriz_ch1, 0, 3)
+        
+        l_matriz.addWidget(QLabel("Canal 2:"), 0, 4)
+        self.matriz_ch2 = QSpinBox()
+        self.matriz_ch2.setRange(100, 999)
+        self.matriz_ch2.setValue(221)
+        l_matriz.addWidget(self.matriz_ch2, 0, 5)
+        left_layout.addWidget(grp_matriz)
 
         # --- Botones Principales y Warning ---
         self.lbl_warning_is = QLabel(" ")
@@ -972,8 +996,8 @@ class ControlEspectroscopiaPane(QGroupBox):
         btn_layout.addWidget(self.btn_detencion)
         left_layout.addLayout(btn_layout)
         
-        left_layout.addStretch() # Empuja los bloques hacia arriba
-        main_layout.addWidget(left_pane, stretch=1)
+        left_layout.addStretch() # Empuja todo hacia arriba suavemente
+        main_layout.addWidget(left_pane, stretch=3)
 
         # ==========================================
         # MITAD DERECHA: Listas Verticales Altas
@@ -987,6 +1011,7 @@ class ControlEspectroscopiaPane(QGroupBox):
         self.tabla_freq = QTableWidget(0, 1)
         self.tabla_freq.setHorizontalHeaderLabels(["Freqs (Hz)"])
         self.tabla_freq.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # CRÍTICO: NO PONER setMaximumHeight AQUÍ
         freq_col.addWidget(self.tabla_freq)
         
         btn_f_lay = QHBoxLayout()
@@ -1002,6 +1027,7 @@ class ControlEspectroscopiaPane(QGroupBox):
         self.tabla_vdc = QTableWidget(0, 1)
         self.tabla_vdc.setHorizontalHeaderLabels(["Vdc (V)"])
         self.tabla_vdc.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # CRÍTICO: NO PONER setMaximumHeight AQUÍ
         vdc_col.addWidget(self.tabla_vdc)
         
         btn_v_lay = QHBoxLayout()
@@ -1012,7 +1038,10 @@ class ControlEspectroscopiaPane(QGroupBox):
         vdc_col.addLayout(btn_v_lay)
         right_layout.addLayout(vdc_col)
 
-        main_layout.addWidget(right_pane, stretch=1)
+        main_layout.addWidget(right_pane, stretch=2)
+        
+        # Permitir que el tab superior entero respire sin expandirse infinitamente
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         
         # Conexiones
         self.btn_add_freq.clicked.connect(self._add_freq)
@@ -1061,7 +1090,7 @@ class ControlEspectroscopiaPane(QGroupBox):
         else: frecuencias = list(np.linspace(start, stop, pts))
             
         for f in frecuencias:
-            f_int = int(round(f)) # Redondeo de enteros
+            f_int = int(round(f)) # Redondeo al entero más cercano
             row = self.tabla_freq.rowCount()
             self.tabla_freq.insertRow(row)
             self.tabla_freq.setItem(row, 0, QTableWidgetItem(f"{f_int}"))

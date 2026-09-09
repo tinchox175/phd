@@ -19,17 +19,16 @@ class TonghuiTH2832:
         self.rm = rm
         self.inst = self.rm.open_resource(self.direccion)
         self.inst.timeout = self.timeout
-        # --- CRÍTICO PARA EQUIPOS TONGHUI ---
         self.inst.write_termination = '\n'
         self.inst.read_termination = '\n'
-        try:
-            idn = self.inst.query("*IDN?")
-            print(f"Identificación del equipo: {idn.strip()}")
-        except Exception as e:
-            raise Exception(f"Fallo en el handshake *IDN?: {e}")
+        
         self.inst.write("*CLS")
         self.inst.write("TRIG:SOUR BUS") # Bloquear trigger interno
         self.inst.write("FUNC:IMP RX")   # Siempre pedir Resistencia y Reactancia
+        
+        # Habilitar Monitores Vm e Im
+        self.inst.write("FUNC:SMON:VAC ON")
+        self.inst.write("FUNC:SMON:IAC ON")
         print(f"TH2832 Conectado: {self.direccion}")
         
     def set_frecuencia(self, freq):
@@ -49,11 +48,9 @@ class TonghuiTH2832:
             self.inst.write(f"BIAS:VOLT {vdc}V")
             
     def set_speed_and_avg(self, speed_str, avg):
-        # speed_str: "FAST", "MED", "SLOW"
         self.inst.write(f"APER {speed_str}, {int(avg)}")
         
     def set_rsou(self, rsou_val):
-        # 30 o 100 ohms
         self.inst.write(f"ORES {int(rsou_val)}")
         
     def set_range(self, range_str):
@@ -66,16 +63,61 @@ class TonghuiTH2832:
         self.inst.write(f"TRIG:DEL {delay_s}S")
         
     def medir(self):
-        self.inst.write("*TRG") 
-        respuesta = self.inst.query("FETC?")
-        partes = respuesta.split(',')
+        self.inst.write("*TRG") # Disparar medición
+        
+        # POLLING: Esperar a que el equipo termine de medir (Status != -1)
+        for _ in range(40): # Espera máxima de ~2 segundos
+            time.sleep(0.05)
+            try:
+                respuesta = self.inst.query("FETC?")
+                partes = respuesta.split(',')
+                status = int(partes[2])
+                if status != -1:
+                    r = float(partes[0])
+                    x = float(partes[1])
+                    return r, x, status
+            except:
+                pass
+        return float('nan'), float('nan'), -1
+
+    def get_monitors(self):
         try:
-            r = float(partes[0])
-            x = float(partes[1])
-            status = int(partes[2]) # <-- Extraer el Byte de Status
-            return r, x, status
+            vm = float(self.inst.query("FETC:SMON:VAC?"))
+            im = float(self.inst.query("FETC:SMON:IAC?"))
+            return vm, im
         except:
-            return float('nan'), float('nan'), -1
+            return float('nan'), float('nan')
+# ==============================================================================
+# DRIVER DE LA MATRIZ HP34970A
+# ==============================================================================
+class SwitchMatrixHP34970A:
+    def __init__(self, resource_name='GPIB0::9::INSTR', timeout=2000):
+        self.direccion = resource_name
+        self.rm = None
+        self.instrument = None
+        self.timeout = timeout
+
+    def conectar(self, rm):
+        self.rm = rm
+        self.instrument = self.rm.open_resource(self.direccion)
+        self.instrument.timeout = self.timeout
+        self.instrument.write_termination = '\n'
+        self.instrument.read_termination = '\n'
+        print(f"HP34970A Conectado: {self.direccion}")
+
+    def open_channels(self, channel_list):
+        if isinstance(channel_list, (list, tuple)):
+            channel_str = ','.join(str(ch) for ch in channel_list)
+        else:
+            channel_str = str(channel_list)
+        self.instrument.write(f'ROUTe:OPEN (@{channel_str})')
+
+    def close_channels(self, channel_list):
+        if isinstance(channel_list, (list, tuple)):
+            channel_str = ','.join(str(ch) for ch in channel_list)
+        else:
+            channel_str = str(channel_list)
+        self.instrument.write(f'ROUTe:CLOSe (@{channel_str})')
 
 class LakeShoreDRC91CA:
     def __init__(self, resource_name="GPIB0::12::INSTR", timeout=2000):
@@ -900,10 +942,11 @@ class HiloTemperatura(QThread):
         self.corriendo = False
 
 # ==============================================================================
-# HILO DE ESPECTROSCOPÍA DE IMPEDANCIA
+# HILO DE ESPECTROSCOPÍA DE IMPEDANCIA (ACTUALIZADO PARA MATRIZ)
 # ==============================================================================
 class HiloEspectroscopia(QThread):
-    datos_is = Signal(float, float, float, float, float, float, float, int)
+    # Emite: Vdc, Freq, R1, X1, Z1, Theta1, R2, X2, Z2, Theta2, t_min, Status
+    datos_is = Signal(float, float, float, float, float, float, float, float, float, float, float, int)
     estado_msg = Signal(str)
     error_detectado = Signal(str)
 
@@ -912,6 +955,7 @@ class HiloEspectroscopia(QThread):
         self.estado = estado_compartido
         self.corriendo = False
         self.lcr = TonghuiTH2832(resource_name=self.estado.get('gpib_lcr', "GPIB0::11::INSTR"))
+        self.matriz = SwitchMatrixHP34970A(resource_name=self.estado.get('gpib_matriz', "GPIB0::9::INSTR"))
 
     def iniciar_medicion(self):
         self.corriendo = True
@@ -922,17 +966,23 @@ class HiloEspectroscopia(QThread):
 
     def run(self):
         archivo_csv = self.estado.get('ruta_archivo_is', 'espectroscopia.csv')
+        usa_matriz = self.estado.get('usa_matriz', False)
+        ch1_matriz = self.estado.get('matriz_ch1', 212)
+        ch2_matriz = self.estado.get('matriz_ch2', 221)
         
         try:
             import pyvisa
             rm = pyvisa.ResourceManager()
             self.lcr.conectar(rm)
+            if usa_matriz:
+                self.matriz.conectar(rm)
+                # Seguridad: Abrir ambos canales al inicio
+                self.matriz.open_channels([ch1_matriz, ch2_matriz])
         except Exception as e:
-            self.error_detectado.emit(f"Error conectando al LCR: {e}")
+            self.error_detectado.emit(f"Error conectando equipos IS: {e}")
             self.corriendo = False
             return
 
-        # 1. Aplicar configuraciones globales del LCR
         self.lcr.set_alc(self.estado.get('alc_on', False))
         self.lcr.set_vac(self.estado.get('vac', 0.1))
         self.lcr.set_speed_and_avg(self.estado.get('speed', "MED"), self.estado.get('avg', 1))
@@ -943,8 +993,13 @@ class HiloEspectroscopia(QThread):
         lista_vdc = self.estado.get('lista_vdc', [0.0])
         frecuencias = self.estado.get('frecuencias', [])
         
-        # Preparar CSV
-        encabezado = ["Tiempo (min)", "Vdc (V)", "Freq (Hz)", "R (Ohm)", "X (Ohm)", "|Z| (Ohm)", "Theta (Deg)", "Status"]
+        # Nuevo Formato de Header
+        encabezado = [
+            "Tiempo (min)", "Vdc (V)", "Freq (Hz)", 
+            "R_ch1 (Ohm)", "X_ch1 (Ohm)", "|Z|_ch1 (Ohm)", "Theta_ch1 (Deg)", "Vm_ch1 (V)", "Im_ch1 (A)",
+            "R_ch2 (Ohm)", "X_ch2 (Ohm)", "|Z|_ch2 (Ohm)", "Theta_ch2 (Deg)", "Vm_ch2 (V)", "Im_ch2 (A)",
+            "Status"
+        ]
         with open(archivo_csv, 'w', newline='') as f:
             csv.writer(f).writerow(encabezado)
 
@@ -955,28 +1010,53 @@ class HiloEspectroscopia(QThread):
             
             self.estado_msg.emit(f"Estabilizando Vdc = {vdc} V")
             self.lcr.set_vdc(vdc)
-            time.sleep(1.0) # Esperar a que el capacitor se cargue al nuevo Vdc
+            time.sleep(1.0) 
             
             for freq in frecuencias:
                 if not self.corriendo: break
-                
                 self.lcr.set_frecuencia(freq)
                 
-                # Tiempo de estabilización dinámico (bajas frecuencias requieren más tiempo)
                 delay_freq = 0.5 if freq < 100 else 0.1
-                time.sleep(delay_freq)
+                time.sleep(delay_freq) # Settling del equipo tras salto de Freq/Voltaje
                 
-                r, x, status = self.lcr.medir()
+                # --- MEDICIÓN DEL CANAL 1 ---
+                if usa_matriz:
+                    self.matriz.open_channels(ch2_matriz) # Evita cortos
+                    self.matriz.close_channels(ch1_matriz)
+                    time.sleep(0.2) # Settling del Relay Mecánico
+                    
+                r1, x1, status1 = self.lcr.medir()
+                vm1, im1 = self.lcr.get_monitors()
                 
-                z_mag = math.sqrt(r**2 + x**2) if not math.isnan(r) else float('nan')
-                theta_deg = math.degrees(math.atan2(x, r)) if not math.isnan(r) else float('nan')
+                z1 = math.sqrt(r1**2 + x1**2) if not math.isnan(r1) else float('nan')
+                theta1 = math.degrees(math.atan2(x1, r1)) if not math.isnan(r1) else float('nan')
+                
+                # --- MEDICIÓN DEL CANAL 2 (Opcional) ---
+                r2, x2, status2 = float('nan'), float('nan'), status1
+                vm2, im2 = float('nan'), float('nan')
+                z2, theta2 = float('nan'), float('nan')
+                
+                if usa_matriz and self.corriendo:
+                    self.matriz.open_channels(ch1_matriz)
+                    self.matriz.close_channels(ch2_matriz)
+                    time.sleep(0.2) # Settling del Relay Mecánico
+                    
+                    r2, x2, status2 = self.lcr.medir()
+                    vm2, im2 = self.lcr.get_monitors()
+                    
+                    z2 = math.sqrt(r2**2 + x2**2) if not math.isnan(r2) else float('nan')
+                    theta2 = math.degrees(math.atan2(x2, r2)) if not math.isnan(r2) else float('nan')
+
                 t_min = (time.time() - tiempo_inicio) / 60.0
+                status_general = status1 if status1 != 0 else status2
                 
-                self.datos_is.emit(vdc, freq, r, x, z_mag, theta_deg, t_min, status)
+                self.datos_is.emit(vdc, freq, r1, x1, z1, theta1, r2, x2, z2, theta2, t_min, status_general)
                 
                 with open(archivo_csv, 'a', newline='') as f:
-                    csv.writer(f).writerow([f"{t_min:.4f}", vdc, freq, r, x, z_mag, theta_deg, status])
+                    csv.writer(f).writerow([f"{t_min:.4f}", vdc, freq, r1, x1, z1, theta1, vm1, im1, r2, x2, z2, theta2, vm2, im2, status_general])
 
         self.estado_msg.emit("Espectroscopía Finalizada")
-        self.lcr.set_vdc(0.0) # Seguridad: apagar bias al terminar
+        self.lcr.set_vdc(0.0)
+        if usa_matriz:
+            self.matriz.open_channels([ch1_matriz, ch2_matriz])
         self.corriendo = False
