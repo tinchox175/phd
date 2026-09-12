@@ -6,6 +6,169 @@ from PySide6.QtCore import QThread, Signal
 import numpy as np
 
 # ==============================================================================
+# DRIVERS: GENERADOR DE FUNCIONES Y OSCILOSCOPIO
+# ==============================================================================
+import os
+import pandas as pd
+from scipy.signal import savgol_filter
+import numpy as np
+
+class AgilentAFG:
+    def __init__(self, resource_name='GPIB0::10::INSTR', timeout=5000):
+        self.direccion = resource_name
+        self.inst = None
+        self.timeout = timeout
+        
+    def conectar(self, rm):
+        self.inst = rm.open_resource(self.direccion)
+        self.inst.timeout = self.timeout
+        self.inst.write('OUTP:LOAD INF')
+        print(f"AFG Conectado: {self.direccion}")
+        
+    def configure_burst(self, wave_shape, num_cycles):
+        self.inst.write(f'FUNC {wave_shape}')
+        if wave_shape == 'RAMP':
+            self.inst.write('FUNC:RAMP:SYMM 50') 
+        self.inst.write('BURS:MODE TRIG')
+        self.inst.write(f'BURS:NCYC {num_cycles}') 
+        self.inst.write('BURS:STAT ON')
+        self.inst.write('TRIG:SOUR BUS')
+        
+    def set_pulse_params(self, freq, amp, pulse_width, edge_time):
+        self.inst.write(f'SOUR:FREQ {freq}')
+        self.inst.write(f'SOUR:VOLT:HIGH {amp}') 
+        self.inst.write('SOUR:VOLT:LOW 0')   
+        
+        period = 1.0 / freq
+        target_width = max(pulse_width, 8e-9)
+        max_allowed_edge = 0.625 * target_width
+        actual_edge = min(edge_time, max_allowed_edge)
+        actual_edge = max(actual_edge, 5e-9)
+        max_safe_width = period - (1.6 * actual_edge)
+        actual_width = min(target_width, max_safe_width)
+        
+        safe_buffer_width = period * 0.1 
+        self.inst.write(f'SOUR:PULS:WIDT {safe_buffer_width}') 
+        self.inst.write(f'SOUR:PULS:TRAN:LEAD {actual_edge}') 
+        self.inst.write(f'SOUR:PULS:TRAN:TRA {actual_edge}')  
+        self.inst.write(f'SOUR:PULS:WIDT {actual_width}')
+        
+    def set_bipolar_params(self, freq, amp):
+        self.inst.write(f'SOUR:FREQ {freq}')
+        self.inst.write(f'SOUR:VOLT {amp}')
+        self.inst.write('SOUR:VOLT:OFFS 0')
+        
+    def output_state(self, state):
+        self.inst.write(f"OUTP {'ON' if state else 'OFF'}")
+        
+    def trigger(self):
+        self.inst.write('*TRG')
+
+class TektronixScope:
+    def __init__(self, resource_name='USB0::0x0699::0x0413::C012302::0::INSTR', timeout=10000):
+        self.direccion = resource_name
+        self.inst = None
+        self.timeout = timeout
+        
+    def conectar(self, rm):
+        self.inst = rm.open_resource(self.direccion)
+        self.inst.timeout = self.timeout
+        
+        for ch in [1, 2, 3, 4]:
+            self.inst.write(f'SEL:CH{ch} ON')
+            if ch <= 2: self.inst.write(f'CH{ch}:COUP DC')
+            else: self.inst.write(f'CH{ch}:COUP AC')
+            self.inst.write(f'CH{ch}:BWL 20')
+            
+        self.inst.write('ACQ:MOD HIR') 
+        self.inst.write('HOR:RECO 10000') 
+        print(f"Osciloscopio Conectado: {self.direccion}")
+        
+    def auto_scale(self, freq, amp, wave_shape, pulse_width, edge_time, num_cycles, pulse_zoom_factor, use_sync):
+        period = 1.0 / freq
+        if wave_shape == 'PULS':
+            target_width = max(pulse_width, 8e-9)
+            max_allowed_edge = 0.625 * target_width
+            actual_edge = min(edge_time, max_allowed_edge)
+            actual_edge = max(actual_edge, 5e-9)
+            max_safe_width = period - (1.6 * actual_edge)
+            actual_width = min(target_width, max_safe_width)
+            
+            active_pulse_time = (actual_edge * 2) + actual_width
+            total_time_needed = active_pulse_time * pulse_zoom_factor
+            total_time_needed = min(total_time_needed, period)
+            total_time_needed = max(total_time_needed, 10e-9) 
+        else:
+            total_time_needed = (num_cycles + 1.5) * period
+            
+        t_div = total_time_needed / 10.0
+        self.inst.write(f'HOR:SCA {t_div}')
+        self.inst.write('HOR:DEL:MOD OFF') 
+        self.inst.write('HOR:POS 20')  
+        
+        self.inst.write('TRIG:A:TYP EDGE') 
+        self.inst.write('TRIG:A:EDGE:SLO RISE') 
+        if use_sync:
+            self.inst.write('TRIG:A:SOUR EXT') 
+            self.inst.write('TRIG:A:LEV 1.0')  
+        else:
+            self.inst.write('TRIG:A:SOUR CH1')
+            self.inst.write('TRIG:A:EDGE:COUP DC') 
+            self.inst.write(f'TRIG:A:LEV {amp * 0.2}') 
+        
+        safe_scale = amp / 4.0 
+        for ch in [1, 2, 3, 4]:
+            self.inst.write(f'CH{ch}:SCA {safe_scale}')
+            self.inst.write(f'CH{ch}:POS 0') 
+
+    def prepare_acquisition(self):
+        self.inst.write('ACQ:STOPA SEQ') 
+        self.inst.write('ACQ:STATE ON')
+        time.sleep(0.2)
+        
+    def wait_for_trigger(self, max_wait=5.0):
+        timeout_start = time.time()
+        while int(self.inst.query('BUSY?')) == 1:
+            time.sleep(0.05)
+            if time.time() - timeout_start > max_wait: 
+                self.inst.write('ACQ:STATE OFF') 
+                return False
+        return True
+
+    def auto_scale_y(self):
+        for ch in [1, 2, 3, 4]:
+            try:
+                self.inst.write(f'DAT:SOU CH{ch}')
+                self.inst.write('DAT:ENC ASCI')
+                self.inst.write('DAT:WID 1')
+                time.sleep(0.05)
+                y_mult = float(self.inst.query('WFMPre:YMULT?'))
+                y_zero = float(self.inst.query('WFMPre:YZERO?'))
+                y_off = float(self.inst.query('WFMPre:YOFF?'))
+                raw_data = np.array(self.inst.query_ascii_values('CURV?'))
+                volts = (raw_data - y_off) * y_mult + y_zero
+                vpp = np.max(volts) - np.min(volts)
+                if vpp > 0: 
+                    optimal_scale = max(vpp / 4.0, 0.001) 
+                    self.inst.write(f'CH{ch}:SCA {optimal_scale}')
+            except:
+                pass 
+        time.sleep(0.2)
+
+    def get_waveform(self, channel):
+        self.inst.write(f'DAT:SOU CH{channel}')
+        self.inst.write('DAT:ENC ASCI')
+        self.inst.write('DAT:WID 1')
+        time.sleep(0.05) 
+        y_mult = float(self.inst.query('WFMPre:YMULT?'))
+        y_zero = float(self.inst.query('WFMPre:YZERO?'))
+        y_off = float(self.inst.query('WFMPre:YOFF?'))
+        x_incr = float(self.inst.query('WFMPre:XINCR?'))
+        raw_data = np.array(self.inst.query_ascii_values('CURV?'))
+        volts = (raw_data - y_off) * y_mult + y_zero
+        return volts, x_incr
+
+# ==============================================================================
 # DRIVER DEL LCR TONGHUI TH2832
 # ==============================================================================
 class TonghuiTH2832:
@@ -26,9 +189,11 @@ class TonghuiTH2832:
         self.inst.write("TRIG:SOUR BUS") # Bloquear trigger interno
         self.inst.write("FUNC:IMP RX")   # Siempre pedir Resistencia y Reactancia
         
-        # Habilitar Monitores Vm e Im
-        self.inst.write("FUNC:SMON:VAC ON")
-        self.inst.write("FUNC:SMON:IAC ON")
+        try:
+            self.inst.write("FUNC:SMON:VIAC ON")
+        except:
+            pass # Si falla por error de sintaxis del firmware, lo ignoramos
+
         print(f"TH2832 Conectado: {self.direccion}")
         
     def set_frecuencia(self, freq):
@@ -81,9 +246,13 @@ class TonghuiTH2832:
         return float('nan'), float('nan'), -1
 
     def get_monitors(self):
+        # Queries extraídas de la página 86 del manual
         try:
             vm = float(self.inst.query("FETC:SMON:VAC?"))
             im = float(self.inst.query("FETC:SMON:IAC?"))
+            # Filtro para ignorar el valor 9.9e37 (Error/Out of bounds)
+            if abs(vm) > 1e30: vm = float('nan')
+            if abs(im) > 1e30: im = float('nan')
             return vm, im
         except:
             return float('nan'), float('nan')
@@ -942,7 +1111,7 @@ class HiloTemperatura(QThread):
         self.corriendo = False
 
 # ==============================================================================
-# HILO DE ESPECTROSCOPÍA DE IMPEDANCIA (ACTUALIZADO PARA MATRIZ)
+# HILO DE ESPECTROSCOPÍA DE IMPEDANCIA (ACTUALIZADO PARA MATRIZ Y ALC)
 # ==============================================================================
 class HiloEspectroscopia(QThread):
     # Emite: Vdc, Freq, R1, X1, Z1, Theta1, R2, X2, Z2, Theta2, t_min, Status
@@ -968,7 +1137,8 @@ class HiloEspectroscopia(QThread):
         archivo_csv = self.estado.get('ruta_archivo_is', 'espectroscopia.csv')
         usa_matriz = self.estado.get('usa_matriz', False)
         ch1_matriz = self.estado.get('matriz_ch1', 212)
-        ch2_matriz = self.estado.get('matriz_ch2', 221)
+        ch2_matriz = self.estado.get('matriz_ch2', 222)
+        alc_habilitado = self.estado.get('alc_on', False)
         
         try:
             import pyvisa
@@ -976,14 +1146,19 @@ class HiloEspectroscopia(QThread):
             self.lcr.conectar(rm)
             if usa_matriz:
                 self.matriz.conectar(rm)
-                # Seguridad: Abrir ambos canales al inicio
-                self.matriz.open_channels([ch1_matriz, ch2_matriz])
+                
+                # SEGURIDAD INICIAL: Desactivar ALC antes de cualquier ruteo
+                self.lcr.set_alc(False)
+                self.matriz.open_channels(ch2_matriz)
+                self.matriz.close_channels(ch1_matriz)
+                time.sleep(0.5) 
         except Exception as e:
             self.error_detectado.emit(f"Error conectando equipos IS: {e}")
             self.corriendo = False
             return
 
-        self.lcr.set_alc(self.estado.get('alc_on', False))
+        # Aplicar settings base (dejando el ALC apagado temporalmente si se usa matriz)
+        self.lcr.set_alc(False if usa_matriz else alc_habilitado)
         self.lcr.set_vac(self.estado.get('vac', 0.1))
         self.lcr.set_speed_and_avg(self.estado.get('speed', "MED"), self.estado.get('avg', 1))
         self.lcr.set_rsou(self.estado.get('rsou', 100))
@@ -993,7 +1168,6 @@ class HiloEspectroscopia(QThread):
         lista_vdc = self.estado.get('lista_vdc', [0.0])
         frecuencias = self.estado.get('frecuencias', [])
         
-        # Nuevo Formato de Header
         encabezado = [
             "Tiempo (min)", "Vdc (V)", "Freq (Hz)", 
             "R_ch1 (Ohm)", "X_ch1 (Ohm)", "|Z|_ch1 (Ohm)", "Theta_ch1 (Deg)", "Vm_ch1 (V)", "Im_ch1 (A)",
@@ -1014,36 +1188,63 @@ class HiloEspectroscopia(QThread):
             
             for freq in frecuencias:
                 if not self.corriendo: break
-                self.lcr.set_frecuencia(freq)
                 
-                delay_freq = 0.5 if freq < 100 else 0.1
-                time.sleep(delay_freq) # Settling del equipo tras salto de Freq/Voltaje
-                
-                # --- MEDICIÓN DEL CANAL 1 ---
+                # ====================================================
+                # MEDICIÓN CANAL 1 (Protección ALC)
+                # ====================================================
                 if usa_matriz:
-                    self.matriz.open_channels(ch2_matriz) # Evita cortos
+                    # 1. Desactivar ALC para evitar el pico de corriente al abrir Hpot
+                    if alc_habilitado: 
+                        self.lcr.set_alc(False)
+                        time.sleep(0.1)
+                        
+                    # 2. Break-before-make seguro
+                    self.matriz.open_channels(ch2_matriz)
                     self.matriz.close_channels(ch1_matriz)
-                    time.sleep(0.2) # Settling del Relay Mecánico
+                    time.sleep(0.2) 
                     
+                    # 3. Restaurar ALC con el circuito ya cerrado y feedback funcional
+                    if alc_habilitado:
+                        self.lcr.set_alc(True)
+                        time.sleep(0.4) # Dar tiempo al lazo ALC para que llegue al setpoint suavemente
+                    
+                self.lcr.set_frecuencia(freq)
+                delay_freq = 0.5 if freq < 100 else 0.15
+                time.sleep(delay_freq) 
+                
                 r1, x1, status1 = self.lcr.medir()
                 vm1, im1 = self.lcr.get_monitors()
-                
                 z1 = math.sqrt(r1**2 + x1**2) if not math.isnan(r1) else float('nan')
                 theta1 = math.degrees(math.atan2(x1, r1)) if not math.isnan(r1) else float('nan')
                 
-                # --- MEDICIÓN DEL CANAL 2 (Opcional) ---
+                # ====================================================
+                # MEDICIÓN CANAL 2 (Protección ALC)
+                # ====================================================
                 r2, x2, status2 = float('nan'), float('nan'), status1
                 vm2, im2 = float('nan'), float('nan')
                 z2, theta2 = float('nan'), float('nan')
                 
                 if usa_matriz and self.corriendo:
+                    # 1. Desactivar ALC de nuevo
+                    if alc_habilitado:
+                        self.lcr.set_alc(False)
+                        time.sleep(0.1)
+                        
+                    # 2. Break-before-make seguro
                     self.matriz.open_channels(ch1_matriz)
                     self.matriz.close_channels(ch2_matriz)
-                    time.sleep(0.2) # Settling del Relay Mecánico
+                    time.sleep(0.2)
+                    
+                    # 3. Restaurar ALC
+                    if alc_habilitado:
+                        self.lcr.set_alc(True)
+                        time.sleep(0.4)
+                    
+                    # Espera extra por el salto de impedancia a misma frecuencia
+                    time.sleep(0.15)
                     
                     r2, x2, status2 = self.lcr.medir()
                     vm2, im2 = self.lcr.get_monitors()
-                    
                     z2 = math.sqrt(r2**2 + x2**2) if not math.isnan(r2) else float('nan')
                     theta2 = math.degrees(math.atan2(x2, r2)) if not math.isnan(r2) else float('nan')
 
@@ -1057,6 +1258,213 @@ class HiloEspectroscopia(QThread):
 
         self.estado_msg.emit("Espectroscopía Finalizada")
         self.lcr.set_vdc(0.0)
+        self.lcr.set_alc(False) # Dejar el equipo seguro al terminar
+        
         if usa_matriz:
             self.matriz.open_channels([ch1_matriz, ch2_matriz])
+            
+        self.corriendo = False
+
+class HiloCorreccionSpot(QThread):
+    progreso = Signal(int, int, float) 
+    estado_msg = Signal(str)
+    finalizado = Signal(str)
+    error_detectado = Signal(str)
+
+    def __init__(self, estado_compartido, tipo):
+        super().__init__()
+        self.estado = estado_compartido
+        self.tipo = tipo # Viene como "OPEN" o "SHOR" desde la UI
+        self.lcr = TonghuiTH2832(resource_name=self.estado.get('gpib_lcr', "GPIB0::11::INSTR"))
+
+    def run(self):
+        frecuencias = self.estado.get('frecuencias_corr', [])
+        if not frecuencias:
+            self.error_detectado.emit("No hay frecuencias cargadas para corregir.")
+            return
+
+        try:
+            import pyvisa
+            rm = pyvisa.ResourceManager()
+            self.lcr.conectar(rm)
+            
+            self.estado_msg.emit(f"Preparando equipo para corrección {self.tipo}...")
+            
+            comando_tipo = "OPEN" if self.tipo == "OPEN" else "SHORT"
+            
+            # 1. Preparación Crítica del Equipo
+            self.lcr.inst.write("DISP:PAGE CSET") 
+            time.sleep(0.5)
+            
+            # Aumentamos el timeout de VISA dramáticamente para que *OPC? no aborte 
+            # esperando las mediciones de 20Hz
+            self.lcr.inst.timeout = 60000 
+            
+            self.lcr.inst.write("TRIG:SOUR INT")
+            self.lcr.inst.write("FUNC:IMP:RANG:AUTO ON")
+            self.lcr.inst.write("APER SLOW, 1") 
+            self.lcr.inst.write("VOLT 1V")      
+            self.lcr.inst.write("BIAS:STAT 0")  
+            self.lcr.inst.write("AMPL:ALC 0")   
+            time.sleep(1.0)
+
+            for i, freq in enumerate(frecuencias):
+                if not self.isRunning(): break 
+                
+                spot_id = i + 1
+                if spot_id > 201: 
+                    break
+                
+                self.progreso.emit(spot_id, len(frecuencias), freq)
+                
+                self.lcr.inst.write(f"FREQ {freq}HZ")
+                time.sleep(0.1)
+                
+                # 2. Configurar el Spot (ESPACIO MANTENIDO)
+                self.lcr.inst.write(f"CORR:SPOT {spot_id}:FREQ {freq}HZ")
+                self.lcr.inst.write(f"CORR:SPOT {spot_id}:STAT ON")
+                
+                # 3. Disparar calibración
+                self.lcr.inst.write(f"CORR:SPOT {spot_id}:{comando_tipo}")
+                
+                # 4. Polling nativo: Python esperará aquí exactamente el tiempo
+                # que el LCR necesite para integrar el punto, sin adivinar.
+                self.lcr.inst.query("*OPC?")
+
+            # 5. Activar la bandera global para que el equipo use estos spots
+            if comando_tipo == "OPEN":
+                self.lcr.inst.write("CORR:OPEN:STAT ON")
+            else:
+                self.lcr.inst.write("CORR:SHOR:STAT ON")
+                
+            self.finalizado.emit(f"Corrección {self.tipo} de {len(frecuencias)} puntos completada con éxito.")
+
+        except Exception as e:
+            self.error_detectado.emit(f"Error durante corrección {self.tipo}: {e}")
+        finally:
+            if self.lcr.inst:
+                try:
+                    self.lcr.inst.timeout = 5000 
+                    self.lcr.inst.write("DISP:PAGE MEAS")
+                    self.lcr.inst.write("TRIG:SOUR BUS")
+                except:
+                    pass
+
+class HiloPulsos(QThread):
+    datos_pulso = Signal(float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray)
+    estado_msg = Signal(str)
+    error_detectado = Signal(str)
+    
+    def __init__(self, estado_compartido):
+        super().__init__()
+        self.estado = estado_compartido
+        self.corriendo = False
+        self.afg = AgilentAFG(resource_name=self.estado.get('afg_addr', 'GPIB0::10::INSTR'))
+        self.scope = TektronixScope(resource_name=self.estado.get('scope_addr', 'USB0::0x0699::0x0413::C012302::0::INSTR'))
+        
+    def iniciar_medicion(self):
+        self.corriendo = True
+        self.start()
+        
+    def detener_medicion(self):
+        self.corriendo = False
+
+    def run(self):
+        try:
+            import pyvisa
+            rm = pyvisa.ResourceManager()
+            self.afg.conectar(rm)
+            self.scope.conectar(rm)
+        except Exception as e:
+            self.error_detectado.emit(f"Error conectando AFG/Scope: {e}")
+            self.corriendo = False
+            return
+            
+        frecuencias = self.estado.get('frecuencias_pulsos', [1000])
+        amplitudes = self.estado.get('amplitudes_pulsos', [0.15])
+        r_limit = self.estado.get('r_limit', 1000.0)
+        max_voltage = self.estado.get('max_voltage_pulse', 0.4)
+        num_cycles = self.estado.get('num_cycles', 1)
+        wave_shape = self.estado.get('wave_shape', 'SQU')
+        pulse_width = self.estado.get('pulse_width', 2000e-9)
+        edge_time = self.estado.get('edge_time', 50e-9)
+        pulse_zoom = self.estado.get('pulse_zoom_factor', 10.0)
+        use_sync = self.estado.get('use_sync_cable', False)
+        base_file = self.estado.get('ruta_archivo_pulsos', '') # <-- Nuevo
+
+        self.afg.configure_burst(wave_shape, num_cycles)
+
+        for freq in frecuencias:
+            for raw_amp in amplitudes:
+                if not self.corriendo: break
+                
+                amp = max_voltage if raw_amp > max_voltage else raw_amp
+                self.estado_msg.emit(f"Sweeping: Freq = {freq} Hz, Amp = {amp} V")
+                
+                if wave_shape in ['SQU', 'PULS']:
+                    self.afg.set_pulse_params(freq, amp, pulse_width, edge_time)
+                else:
+                    self.afg.set_bipolar_params(freq, amp)
+                    
+                self.afg.output_state(True)
+                self.scope.auto_scale(freq, amp, wave_shape, pulse_width, edge_time, num_cycles, pulse_zoom, use_sync)
+                
+                # First shot to calibrate Y axis
+                self.scope.prepare_acquisition()
+                self.afg.trigger()
+                if self.scope.wait_for_trigger(max_wait=2.0):
+                    self.scope.auto_scale_y()
+                
+                # Real acquisition
+                self.scope.prepare_acquisition()
+                self.afg.trigger()
+                success = self.scope.wait_for_trigger(max_wait=5.0)
+                self.afg.output_state(False)
+                
+                if not success:
+                    self.estado_msg.emit(f"⚠ Trigger Timeout en {freq}Hz, {amp}V.")
+                    continue
+                
+                v1, dt = self.scope.get_waveform(1)
+                v2, _ = self.scope.get_waveform(2)
+                v3, _ = self.scope.get_waveform(3)
+                v4, _ = self.scope.get_waveform(4)
+                
+                time_axis = np.arange(len(v1)) * dt
+                current = (v1 - v2) / r_limit
+                v_dut = v4 - v3  
+                
+                window_len = min(101, len(time_axis))
+                if window_len % 2 == 0: window_len -= 1 
+                v_dut_filt = savgol_filter(v_dut, window_len, 3)
+                current_filt = savgol_filter(current, window_len, 3)
+                
+                self.datos_pulso.emit(freq, amp, time_axis, v1, v2, v3, v4, v_dut_filt, current_filt)
+                
+                # Save Data appending to base string
+                if base_file:
+                    # Strip the .csv if it's there, then append the sweep parameters
+                    base_name = base_file[:-4] if base_file.lower().endswith('.csv') else base_file
+                    filename = f"{base_name}_{freq}Hz_{amp}V.csv"
+                    
+                    metadata = (
+                        f"# --- BURST CONFIG LOG ---\n"
+                        f"# Shape: {wave_shape}\n"
+                        f"# Freq: {freq}\n"
+                        f"# Amp: {amp}\n"
+                        f"# R_lim: {r_limit}\n"
+                        f"# Filter: Savitzky-Golay\n"
+                        f"# -------------------\n"
+                    )
+                    df = pd.DataFrame({
+                        'Time_s': time_axis, 'CH1_V_Supply': v1, 'CH2_V_Resistor': v2,
+                        'CH3_V_SenseP': v3, 'CH4_V_SenseN': v4, 'I_Sample_Raw': current,
+                        'V_Sample_Raw': v_dut, 'I_Sample_Filt': current_filt, 'V_Sample_Filt': v_dut_filt
+                    })
+                    with open(filename, 'w') as f:
+                        f.write(metadata)
+                    df.to_csv(filename, mode='a', index=False)
+                    
+        self.estado_msg.emit("Barrido de Transientes Finalizado")
+        if self.afg.inst: self.afg.output_state(False)
         self.corriendo = False

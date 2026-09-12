@@ -6,17 +6,18 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayo
                                QWidget, QLabel, QGroupBox, QPushButton, QTabWidget, 
                                QLineEdit, QMessageBox, QStatusBar, QFileDialog,
                                QFormLayout, QDialogButtonBox, QDialog, QDoubleSpinBox,
-                               QComboBox, QSpinBox, QCheckBox, QSizePolicy)
+                               QComboBox, QSpinBox, QCheckBox, QSizePolicy, QGridLayout)
 from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 import pyqtgraph as pg
 import json
 
 # Import the View (UI) and Model (Hardware)
-from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, ParametrosRelajacionPane, TemperaturaTab, ControlEspectroscopiaPane, EspectroscopiaTab
+from IVsuplemento import (ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, 
+                          ParametrosRelajacionPane, TemperaturaTab, ControlEspectroscopiaPane, 
+                          EspectroscopiaTab, PulsosTransientesTab)
 
-from hardware import HiloMedicionDual, HiloTemperatura, HiloEspectroscopia
-
+from hardware import HiloMedicionDual, HiloTemperatura, HiloEspectroscopia, HiloCorreccionSpot, HiloPulsos
 class ConfiguracionGeneralDialog(QDialog):
     def __init__(self, config_actual, parent=None):
         super().__init__(parent)
@@ -221,7 +222,8 @@ class IVMeasurementApp(QMainWindow):
         self.worker = HiloMedicionDual(self.estado_compartido)
         self.worker_temp = HiloTemperatura(self.estado_compartido) 
         self.worker_is = HiloEspectroscopia(self.estado_compartido) # <-- NUEVO
-        
+        self.worker_pulsos = HiloPulsos(self.estado_compartido)
+
         self._limpiar_datos_graficos()
         self._setup_menu()
         self._setup_ui()
@@ -230,7 +232,9 @@ class IVMeasurementApp(QMainWindow):
         # Aplicar los defaults a la UI inmediatamente al arrancar
         self._aplicar_gobernador(self.config_app["max_current_ma"])
         self._aplicar_defaults_a_ui()
-        self._al_cambiar_pestana(self.setup_tabs.currentIndex())
+        # SOLUCIÓN BUG DE INICIO: Esperar a que la ventana exista físicamente 
+        # antes de intentar ocultar los gráficos base.
+        QTimer.singleShot(10, lambda: self._al_cambiar_pestana(self.setup_tabs.currentIndex()))
 
     def _cargar_configuracion(self):
         if os.path.exists(self.archivo_config):
@@ -348,7 +352,9 @@ class IVMeasurementApp(QMainWindow):
         self.relajacion_tab = RelajacionTab() 
         self.temperatura_tab = TemperaturaTab()
         self.espectroscopia_tab = EspectroscopiaTab() 
-        
+        self.pulsos_tab = PulsosTransientesTab()
+
+        self.setup_tabs.addTab(self.pulsos_tab, "Transientes (Osc + AFG)")
         self.setup_tabs.addTab(self.espectroscopia_tab, "Espectroscopía (TH2832)")
         self.setup_tabs.addTab(self.dual_inst_tab, "Setup: K224 + 34420A")
         self.setup_tabs.addTab(self.relajacion_tab, "Relajación") 
@@ -413,44 +419,127 @@ class IVMeasurementApp(QMainWindow):
 
         # --- PANELES ESPECTROSCOPÍA (Ocultos por defecto) ---
         self.nyquist_pane = QGroupBox("Gráfico de Nyquist")
+        self.nyquist_pane.setMinimumHeight(350)
         nyq_layout = QVBoxLayout()
         self.nyquist_plot = pg.PlotWidget()
         self.nyquist_plot.setLabel('bottom', "Z' (Real) [Ω]")
         self.nyquist_plot.setLabel('left', "-Z'' (Imaginario) [Ω]")
         self.nyquist_plot.showGrid(x=True, y=True, alpha=0.3)
         self.nyquist_plot.setAspectLocked(True, ratio=1) 
-        self.nyquist_curve = self.nyquist_plot.plot(symbol='o', pen=None, symbolSize=5, symbolBrush='b', name="CH 1")
-        self.nyquist_curve_ch2 = self.nyquist_plot.plot(symbol='s', pen=None, symbolSize=5, symbolBrush='r', name="CH 2") # <-- NUEVO
         self.nyquist_plot.addLegend()
         nyq_layout.addWidget(self.nyquist_plot)
         self.nyquist_pane.setLayout(nyq_layout)
         bottom_row_layout.addWidget(self.nyquist_pane)
         self.nyquist_pane.hide()
 
-        self.bode_pane = QGroupBox("Gráfico de Bode")
+        self.bode_pane = QGroupBox("Gráficos R y X")
+        self.bode_pane.setMinimumHeight(350)
         bode_layout = QVBoxLayout()
         self.bode_widget = pg.GraphicsLayoutWidget()
         
-        self.bode_mag_plot = self.bode_widget.addPlot(row=0, col=0)
-        self.bode_mag_plot.setLogMode(x=True, y=True)
-        self.bode_mag_plot.setLabel('left', "|Z| [Ω]")
-        self.bode_mag_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.bode_mag_curve = self.bode_mag_plot.plot(pen=pg.mkPen('b', width=2))
-        self.bode_mag_curve_ch2 = self.bode_mag_plot.plot(pen=pg.mkPen('r', width=2, style=Qt.PenStyle.DashLine)) # <-- NUEVO
+        self.bode_r_plot = self.bode_widget.addPlot(row=0, col=0)
+        self.bode_r_plot.setLogMode(x=True, y=False) # X log, Y lineal
+        self.bode_r_plot.setLabel('left', "R [Ω]")
+        self.bode_r_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.bode_r_plot.addLegend()
         
-        self.bode_pha_plot = self.bode_widget.addPlot(row=1, col=0)
-        self.bode_pha_plot.setLogMode(x=True, y=False)
-        self.bode_pha_plot.setLabel('left', "Phase [°]")
-        self.bode_pha_plot.setLabel('bottom', "Frequency [Hz]")
-        self.bode_pha_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.bode_pha_curve = self.bode_pha_plot.plot(pen=pg.mkPen('b', width=2))
-        self.bode_pha_curve_ch2 = self.bode_pha_plot.plot(pen=pg.mkPen('r', width=2, style=Qt.PenStyle.DashLine)) # <-- NUEVO
-        self.bode_pha_plot.setXLink(self.bode_mag_plot)
+        self.bode_x_plot = self.bode_widget.addPlot(row=1, col=0)
+        self.bode_x_plot.setLogMode(x=True, y=False) # X log, Y lineal
+        self.bode_x_plot.setLabel('left', "X [Ω]")
+        self.bode_x_plot.setLabel('bottom', "Frequency [Hz]")
+        self.bode_x_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.bode_x_plot.addLegend()
+        self.bode_x_plot.setXLink(self.bode_r_plot)
         
         bode_layout.addWidget(self.bode_widget)
         self.bode_pane.setLayout(bode_layout)
         bottom_row_layout.addWidget(self.bode_pane)
         self.bode_pane.hide()
+
+        # --- PANELES TRANSIENTES (PULSOS) RE-ESTRUCTURADOS EN GRID ---
+        self.pulsos_pane = QWidget()
+        self.pulsos_pane.setMinimumHeight(350) 
+        pulsos_layout = QGridLayout(self.pulsos_pane)
+        pulsos_layout.setContentsMargins(0,0,0,0)
+        
+        # 1. Señales Drive
+        self.pt_drive_pane = QGroupBox("Señales de Excitación (Drive)")
+        pt_drive_lay = QVBoxLayout()
+        self.pt_drive_plot = pg.PlotWidget()
+        self._style_plot(self.pt_drive_plot, "Tiempo (ms)", "Amplitud (V)") 
+        self.pt_drive_plot.addLegend()
+        self.pt_ch1_curve = self.pt_drive_plot.plot(pen=pg.mkPen('#1f77b4', width=2), name="CH1 Supply")
+        self.pt_ch2_curve = self.pt_drive_plot.plot(pen=pg.mkPen('#ff7f0e', width=2), name="CH2 Resistor")
+        pt_drive_lay.addWidget(self.pt_drive_plot)
+        self.pt_drive_pane.setLayout(pt_drive_lay)
+        pulsos_layout.addWidget(self.pt_drive_pane, 0, 0)
+
+        # 2. Señales Sense
+        self.pt_sense_pane = QGroupBox("Señales Sensadas (Sense)")
+        pt_sense_lay = QVBoxLayout()
+        self.pt_sense_plot = pg.PlotWidget()
+        self._style_plot(self.pt_sense_plot, "Tiempo (ms)", "Amplitud (mV)") 
+        self.pt_sense_plot.addLegend()
+        self.pt_ch3_curve = self.pt_sense_plot.plot(pen=pg.mkPen('#2ca02c', width=2), name="CH3 Sense+")
+        self.pt_ch4_curve = self.pt_sense_plot.plot(pen=pg.mkPen('#d62728', width=2), name="CH4 Sense-")
+        self.pt_sense_plot.setXLink(self.pt_drive_plot) # Sincronizar zoom X
+        pt_sense_lay.addWidget(self.pt_sense_plot)
+        self.pt_sense_pane.setLayout(pt_sense_lay)
+        pulsos_layout.addWidget(self.pt_sense_pane, 1, 0)
+
+        # 3. All Channels Overlay (Twin Y-Axis)
+        self.pt_over_pane = QGroupBox("All Channels Overlay")
+        pt_over_lay = QVBoxLayout()
+        self.pt_over_plot = pg.PlotWidget()
+        self._style_plot(self.pt_over_plot, "Tiempo (ms)", "Drive (V)")
+        self.pt_over_plot.setXLink(self.pt_drive_plot)
+        
+        # Crear eje Y derecho para Sense (mV)
+        self.pt_over_plot.showAxis('right') # <-- Comando nativo correcto
+        self.pt_over_vb = pg.ViewBox()
+        self.pt_over_plot.scene().addItem(self.pt_over_vb)
+        self.pt_over_plot.getAxis('right').linkToView(self.pt_over_vb)
+        self.pt_over_vb.setXLink(self.pt_over_plot)
+        self.pt_over_plot.getAxis('right').setLabel('Sense (mV)')
+
+        # Mantener el ViewBox alineado al redimensionar
+        def update_views():
+            self.pt_over_vb.setGeometry(self.pt_over_plot.getViewBox().sceneBoundingRect())
+            self.pt_over_vb.linkedViewChanged(self.pt_over_plot.getViewBox(), self.pt_over_vb.XAxis)
+            
+        self.pt_over_plot.getViewBox().sigResized.connect(update_views)
+        update_views() # <-- CRÍTICO: Forzar la geometría inicial antes del primer resize
+
+        self.pt_over_plot.addLegend()
+        self.pt_over_ch1 = self.pt_over_plot.plot(pen=pg.mkPen('#1f77b4', width=2, style=Qt.PenStyle.SolidLine), name="CH1")
+        self.pt_over_ch2 = self.pt_over_plot.plot(pen=pg.mkPen('#ff7f0e', width=2, style=Qt.PenStyle.SolidLine), name="CH2")
+        self.pt_over_ch3 = pg.PlotCurveItem(pen=pg.mkPen('#2ca02c', width=2, style=Qt.PenStyle.DashLine), name="CH3")
+        self.pt_over_ch4 = pg.PlotCurveItem(pen=pg.mkPen('#d62728', width=2, style=Qt.PenStyle.DashLine), name="CH4")
+        self.pt_over_vb.addItem(self.pt_over_ch3)
+        self.pt_over_vb.addItem(self.pt_over_ch4)
+        
+        pt_over_lay.addWidget(self.pt_over_plot)
+        self.pt_over_pane.setLayout(pt_over_lay)
+        pulsos_layout.addWidget(self.pt_over_pane, 2, 0)
+
+        # 4. Curva I-V (RAW + Filtrada)
+        self.pt_iv_pane = QGroupBox("Curva I-V (Raw + Filtered)")
+        pt_iv_lay = QVBoxLayout()
+        self.pt_iv_plot = pg.PlotWidget()
+        self._style_plot(self.pt_iv_plot, "Voltaje Muestra (mV)", "Corriente Muestra (µA)") 
+        self.pt_iv_plot.addLegend()
+        self.pt_iv_curve_raw = self.pt_iv_plot.plot(pen=pg.mkPen(color=(128,128,128,100), width=1), name="RAW")
+        self.pt_iv_curve_filt = self.pt_iv_plot.plot(pen=pg.mkPen('#9467bd', width=2), name="Filtrado")
+        
+        self.pt_iv_plot.addLine(x=0, pen=pg.mkPen('k', width=1))
+        self.pt_iv_plot.addLine(y=0, pen=pg.mkPen('k', width=1))
+        
+        pt_iv_lay.addWidget(self.pt_iv_plot)
+        self.pt_iv_pane.setLayout(pt_iv_lay)
+        pulsos_layout.addWidget(self.pt_iv_pane, 0, 1, 3, 1) # Abarca las 3 filas
+        
+        bottom_row_layout.addWidget(self.pulsos_pane)
+        self.pulsos_pane.hide()
 
         # ==========================================
         # CRÍTICO: EXPANDIR LOS GRÁFICOS
@@ -473,14 +562,33 @@ class IVMeasurementApp(QMainWindow):
         """Muestra u oculta los gráficos dependiendo del modo activo."""
         nombre_pestana = self.setup_tabs.tabText(index)
         es_is = "Espectroscopía" in nombre_pestana
+        es_pulsos = "Transientes" in nombre_pestana
         
-        self.iv_plot_pane.setVisible(not es_is)
-        self.res_plot_pane.setVisible(not es_is)
-        self.vt_plot_pane.setVisible(not es_is)
+        # 1. Paneles Estándar (I-V, Resistencia)
+        if es_is or es_pulsos:
+            self.iv_plot_pane.hide()
+            self.res_plot_pane.hide()
+            self.vt_plot_pane.hide()
+        else:
+            self.iv_plot_pane.show()
+            self.res_plot_pane.show()
+            self.vt_plot_pane.show()
+            
+        # 2. Paneles de Espectroscopía
+        if es_is:
+            self.nyquist_pane.show()
+            self.bode_pane.show()
+        else:
+            self.nyquist_pane.hide()
+            self.bode_pane.hide()
+            
+        # 3. Paneles de Pulsos Transientes
+        if es_pulsos:
+            self.pulsos_pane.show()
+        else:
+            self.pulsos_pane.hide()
         
-        self.nyquist_pane.setVisible(es_is)
-        self.bode_pane.setVisible(es_is)
-        
+        # 4. Ajustes de Eje X dinámicos
         if nombre_pestana == "Relajación":
             self.res_plot.setLabel('bottom', "Tiempo (min)")
         elif "K224" in nombre_pestana:
@@ -533,6 +641,7 @@ class IVMeasurementApp(QMainWindow):
         self.setup_tabs.currentChanged.connect(self._al_cambiar_pestana)
         self._setup_conexiones_temp()
         self._setup_conexiones_is() # <--- ¡ESTA ES LA LÍNEA QUE FALTABA!
+        self._setup_conexiones_pulsos()
 
         t_pane = self.temperatura_tab.params_pane
         t_pane.btn_medir.clicked.connect(self._iniciar_medicion_temp)
@@ -542,6 +651,84 @@ class IVMeasurementApp(QMainWindow):
         t_pane.btn_aplicar.clicked.connect(self._sincronizar_parametros_temp) 
         
         self.worker_temp.datos_temp.connect(self._actualizar_graficos_termodinamicos)
+
+    def _setup_conexiones_pulsos(self):
+        p_pane = self.pulsos_tab.params_pane
+        p_pane.btn_medir.clicked.connect(self._iniciar_medicion_pulsos)
+        p_pane.btn_detencion.clicked.connect(self.worker_pulsos.detener_medicion)
+        self.worker_pulsos.datos_pulso.connect(self._actualizar_graficos_pulsos)
+        self.worker_pulsos.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
+        self.worker_pulsos.error_detectado.connect(self._mostrar_error)
+
+    def _iniciar_medicion_pulsos(self):
+        if self.worker_pulsos.corriendo: return
+        p_pane = self.pulsos_tab.params_pane
+        
+        try:
+            freqs = [float(x.strip()) for x in p_pane.freqs.text().split(',')]
+            amps = [float(x.strip()) for x in p_pane.amps.text().split(',')]
+        except ValueError:
+            self._mostrar_error("Frecuencias o amplitudes inválidas. Use números separados por comas.")
+            return
+
+        ruta_inicial = self.directorio_defecto
+        if ruta_inicial:
+            import time
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            # AÑADIR .csv AQUÍ fuerza al OS a pre-seleccionar el filtro correctamente
+            ruta_inicial = os.path.join(ruta_inicial, f"transientes_{timestamp}.csv") 
+            
+        ruta_archivo, _ = QFileDialog.getSaveFileName(self, "Guardar Transientes", ruta_inicial, "CSV Files (*.csv);;Todos los archivos (*)")
+        if not ruta_archivo: return
+        if not ruta_archivo.lower().endswith('.csv'): ruta_archivo += '.csv'
+
+        self.estado_compartido.update({
+            'frecuencias_pulsos': freqs,
+            'amplitudes_pulsos': amps,
+            'r_limit': p_pane.r_limit.value(),
+            'max_voltage_pulse': p_pane.v_max.value(),
+            'wave_shape': p_pane.forma.currentText(),
+            'num_cycles': p_pane.ciclos.value(),
+            'pulse_width': p_pane.ancho.value(),
+            'edge_time': p_pane.flanco.value(),
+            'use_sync_cable': p_pane.chk_sync.isChecked(),
+            'ruta_archivo_pulsos': ruta_archivo
+        })
+        
+        self.pt_ch1_curve.setData([], [])
+        self.pt_ch2_curve.setData([], [])
+        self.pt_ch3_curve.setData([], [])
+        self.pt_ch4_curve.setData([], [])
+        self.pt_iv_curve.setData([], [])
+        
+        self.worker_pulsos.iniciar_medicion()
+
+    def _actualizar_graficos_pulsos(self, freq, amp, time_axis, v1, v2, v3, v4, v_dut_filt, current_filt):
+        time_ms = time_axis * 1e3
+        v3_mv = v3 * 1e3
+        v4_mv = v4 * 1e3
+        
+        # 1. Drive
+        self.pt_ch1_curve.setData(time_ms, v1)
+        self.pt_ch2_curve.setData(time_ms, v2)
+        
+        # 2. Sense
+        self.pt_ch3_curve.setData(time_ms, v3_mv) 
+        self.pt_ch4_curve.setData(time_ms, v4_mv) 
+        
+        # 3. Overlay
+        self.pt_over_ch1.setData(time_ms, v1)
+        self.pt_over_ch2.setData(time_ms, v2)
+        self.pt_over_ch3.setData(time_ms, v3_mv)
+        self.pt_over_ch4.setData(time_ms, v4_mv)
+        
+        # 4. I-V Curve (Raw calculation + Filtered)
+        v_dut_raw = (v4 - v3) * 1e3
+        r_limit = self.pulsos_tab.params_pane.r_limit.value()
+        current_raw = ((v1 - v2) / r_limit) * 1e6
+        
+        self.pt_iv_curve_raw.setData(v_dut_raw, current_raw)
+        self.pt_iv_curve_filt.setData(v_dut_filt * 1e3, current_filt * 1e6)
 
     # Añadir a _setup_connections(self):
     def _setup_conexiones_temp(self):
@@ -607,74 +794,6 @@ class IVMeasurementApp(QMainWindow):
         
         self.worker_temp.iniciar_medicion()
 
-
-    def _iniciar_medicion_is(self):
-        if self.worker_is.corriendo: return
-        
-        pane = self.espectroscopia_tab.params_pane
-        
-        # 1. Parsear Lógica de Vdc (Fijo vs Barrido)
-        if pane.chk_vdc_sweep.isChecked():
-            lista_vdc = []
-            if pane.tabla_vdc.rowCount() == 0:
-                self._mostrar_error("La tabla de Vdc está vacía para el barrido.")
-                return
-            for row in range(pane.tabla_vdc.rowCount()):
-                try: 
-                    v = float(pane.tabla_vdc.item(row, 0).text())
-                    lista_vdc.append(v)
-                except ValueError: 
-                    pass
-        else:
-            # Si no se usa la lista, se envía el valor fijo ingresado
-            lista_vdc = [pane.vdc_fijo.value()]
-
-        # 2. Parsear Frecuencias
-        lista_freq = []
-        if pane.tabla_freq.rowCount() == 0:
-            self._mostrar_error("La tabla de frecuencias está vacía.")
-            return
-            
-        for row in range(pane.tabla_freq.rowCount()):
-            try: 
-                f = float(pane.tabla_freq.item(row, 0).text())
-                lista_freq.append(f)
-            except ValueError: 
-                pass
-
-        # 3. Guardar Archivo
-        ruta_inicial = self.directorio_defecto
-        if ruta_inicial:
-            import time
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            ruta_inicial = os.path.join(ruta_inicial, f"espectroscopia_{timestamp}")
-
-        ruta_archivo, _ = QFileDialog.getSaveFileName(self, "Guardar Espectroscopía", ruta_inicial, "CSV Files (*.csv)")
-        if not ruta_archivo: return
-        if not ruta_archivo.lower().endswith('.csv'): ruta_archivo += '.csv'
-
-        self.estado_compartido.update({
-            'lista_vdc': lista_vdc,
-            'frecuencias': lista_freq,
-            'vac': pane.vac.value(),
-            'alc_on': pane.chk_alc.isChecked(),
-            'speed': pane.combo_speed.currentText(),
-            'avg': pane.avg_pts.value(),
-            'rsou': int(pane.combo_rsou.currentText()),
-            'rango': pane.combo_rango.currentText(),
-            'trig_delay': pane.trig_delay.value(),
-            'ruta_archivo_is': ruta_archivo,
-            'usa_matriz': pane.chk_matriz.isChecked(),
-            'matriz_ch1': pane.matriz_ch1.value(),
-            'matriz_ch2': pane.matriz_ch2.value(),
-            'ruta_archivo_is': ruta_archivo
-        })
-        
-        self.data_is_f, self.data_is_r, self.data_is_x_neg, self.data_is_z, self.data_is_theta = [], [], [], [], []
-        self.data_is_r_ch2, self.data_is_x_neg_ch2, self.data_is_z_ch2, self.data_is_theta_ch2 = [], [], [], []
-        
-        self.worker_is.iniciar_medicion()
-
     def _actualizar_graficos_termodinamicos(self, t_min, T_act, T_set, pot, v_motor):
         """Actualiza laUI durante la rampa/estabilización (sin medir resistencia aún)."""
         self.data_t_temp.append(t_min)
@@ -726,33 +845,19 @@ class IVMeasurementApp(QMainWindow):
         pane.btn_medir.clicked.connect(self._iniciar_medicion_is)
         pane.btn_detencion.clicked.connect(self.worker_is.detener_medicion)
         
+        # --- NUEVAS CONEXIONES DE CORRECCIÓN ---
+        pane.btn_corr_open.clicked.connect(lambda: self._iniciar_correccion("OPEN"))
+        pane.btn_corr_short.clicked.connect(lambda: self._iniciar_correccion("SHOR"))
+        
         self.worker_is.datos_is.connect(self._actualizar_graficos_is)
         self.worker_is.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
         self.worker_is.error_detectado.connect(self._mostrar_error)
 
-    def _iniciar_medicion_is(self):
-        if self.worker_is.corriendo: return
-        
+    def _iniciar_correccion(self, tipo):
+        """Inicia el hilo de corrección para las frecuencias actualmente en la tabla."""
         pane = self.espectroscopia_tab.params_pane
         
-        # 1. Parsear Tabla Expansiva de Vdc
-        lista_vdc = []
-        if pane.tabla_vdc.rowCount() == 0:
-            lista_vdc = [0.0] # Fallback seguro
-        else:
-            for row in range(pane.tabla_vdc.rowCount()):
-                try:
-                    v = float(pane.tabla_vdc.item(row, 0).text())
-                    lista_vdc.append(v)
-                except ValueError:
-                    pass
-
-        # 2. Parsear Tabla Expansiva de Frecuencias
         lista_freq = []
-        if pane.tabla_freq.rowCount() == 0:
-            self._mostrar_error("La tabla de frecuencias está vacía.")
-            return
-            
         for row in range(pane.tabla_freq.rowCount()):
             try:
                 f = float(pane.tabla_freq.item(row, 0).text())
@@ -760,7 +865,79 @@ class IVMeasurementApp(QMainWindow):
             except ValueError:
                 pass
 
-        # 3. Guardar Archivo (Con Timestamp)
+        if not lista_freq:
+            self._mostrar_error("La tabla de frecuencias está vacía.")
+            return
+            
+        if len(lista_freq) > 201:
+            self.status_bar.showMessage("⚠ Advertencia: El LCR solo soporta 201 puntos. Se truncará la lista.", 5000)
+
+        # Configurar estado compartido para el hilo
+        self.estado_compartido['frecuencias_corr'] = lista_freq
+        
+        # Crear y conectar el hilo de corrección
+        self.worker_corr = HiloCorreccionSpot(self.estado_compartido, tipo)
+        self.worker_corr.progreso.connect(self._actualizar_progreso_corr)
+        self.worker_corr.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
+        self.worker_corr.finalizado.connect(self._finalizar_correccion)
+        self.worker_corr.error_detectado.connect(self._mostrar_error)
+        
+        # Bloquear botones para evitar dobles clicks
+        pane.btn_corr_open.setEnabled(False)
+        pane.btn_corr_short.setEnabled(False)
+        pane.btn_medir.setEnabled(False)
+        
+        self.worker_corr.start()
+
+    def _actualizar_progreso_corr(self, actual, total, freq):
+        self.status_bar.setStyleSheet("color: #0055ff; font-weight: bold;")
+        self.status_bar.showMessage(f"Corrigiendo Punto {actual}/{total} ({freq} Hz)... Por favor espere.")
+
+    def _finalizar_correccion(self, mensaje):
+        self.status_bar.setStyleSheet("color: #2e7d32; font-weight: bold;")
+        self.status_bar.showMessage(mensaje, 6000)
+        
+        # Restaurar botones
+        pane = self.espectroscopia_tab.params_pane
+        pane.btn_corr_open.setEnabled(True)
+        pane.btn_corr_short.setEnabled(True)
+        pane.btn_medir.setEnabled(True)
+
+    def _iniciar_medicion_is(self):
+        if self.worker_is.corriendo: return
+        
+        pane = self.espectroscopia_tab.params_pane
+        
+        # 1. Parsear Lógica de Vdc (Fijo vs Barrido)
+        if pane.chk_vdc_sweep.isChecked():
+            lista_vdc = []
+            if pane.tabla_vdc.rowCount() == 0:
+                self._mostrar_error("La tabla de Vdc está vacía para el barrido.")
+                return
+            for row in range(pane.tabla_vdc.rowCount()):
+                try: 
+                    v = float(pane.tabla_vdc.item(row, 0).text())
+                    lista_vdc.append(v)
+                except ValueError: 
+                    pass
+        else:
+            # Si no se usa la lista, se envía el valor fijo ingresado
+            lista_vdc = [pane.vdc_fijo.value()]
+
+        # 2. Parsear Frecuencias
+        lista_freq = []
+        if pane.tabla_freq.rowCount() == 0:
+            self._mostrar_error("La tabla de frecuencias está vacía.")
+            return
+            
+        for row in range(pane.tabla_freq.rowCount()):
+            try: 
+                f = float(pane.tabla_freq.item(row, 0).text())
+                lista_freq.append(f)
+            except ValueError: 
+                pass
+
+        # 3. Guardar Archivo
         ruta_inicial = self.directorio_defecto
         if ruta_inicial:
             import time
@@ -771,6 +948,7 @@ class IVMeasurementApp(QMainWindow):
         if not ruta_archivo: return
         if not ruta_archivo.lower().endswith('.csv'): ruta_archivo += '.csv'
 
+        # 4. Actualizar el estado con TODO lo necesario
         self.estado_compartido.update({
             'lista_vdc': lista_vdc,
             'frecuencias': lista_freq,
@@ -781,58 +959,78 @@ class IVMeasurementApp(QMainWindow):
             'rsou': int(pane.combo_rsou.currentText()),
             'rango': pane.combo_rango.currentText(),
             'trig_delay': pane.trig_delay.value(),
+            'usa_matriz': pane.chk_matriz.isChecked(),
+            'matriz_ch1': pane.matriz_ch1.value(),
+            'matriz_ch2': pane.matriz_ch2.value(),
             'ruta_archivo_is': ruta_archivo
         })
         
-        self.data_is_f = []
-        self.data_is_r = []
-        self.data_is_x_neg = [] 
-        self.data_is_z = []
-        self.data_is_theta = []
-        
+        # Limpiar gráficos para la nueva corrida
+        self._limpiar_datos_graficos()
         self.worker_is.iniciar_medicion()
 
     # Actualizar la firma para recibir el status
-    def _actualizar_graficos_is(self, vdc, freq, r1, x1, z1, theta1, r2, x2, z2, theta2, t_min, status):        # Tracking del Status Byte
-        if status != 0:
-            errores = {
-                -1: "Buffer vacío",
-                1: "LCR Analog Unbalance",
-                2: "Fallo de A/D Converter",
-                3: "Sobrecarga de Fuente de Señal",
-                4: "Fallo de ALC (No se puede mantener Voltaje Constante)"
-            }
-            msg = errores.get(status, f"Error desconocido ({status})")
+    def _actualizar_graficos_is(self, vdc, freq, r1, x1, z1, theta1, r2, x2, z2, theta2, t_min, status):
+        if status != 0 and status != -1:
+            msg = f"Error Status {status}"
             self.status_bar.setStyleSheet("background-color: #ff9800; color: black; font-weight: bold;")
             self.status_bar.showMessage(f"⚠ ALERTA LCR (Freq: {freq}Hz): {msg}", 4000)
         else:
             self.status_bar.setStyleSheet("")
-            self.status_bar.showMessage(f"IE Corriendo: {vdc} Vdc | {freq:.1f} Hz")
+            self.status_bar.showMessage(f"IS Corriendo: {vdc} Vdc | {freq:.1f} Hz")
 
-        self.data_is_f.append(freq)
+        # 1. Si el Vdc es nuevo, inicializamos su memoria y sus curvas
+        if vdc not in self.data_is:
+            self.data_is[vdc] = {'f':[], 'r1':[], 'x1':[], 'r2':[], 'x2':[], 'dr':[], 'dx':[]}
+            
+            # Asignar un color único y brillante para este barrido Vdc
+            idx = len(self.curvas_is)
+            color_base = pg.intColor(idx, hues=9)
+            
+            pen_ch1 = pg.mkPen(color=color_base, width=2)
+            pen_ch2 = pg.mkPen(color=color_base, width=2, style=Qt.PenStyle.DashLine)
+            pen_diff = pg.mkPen(color=color_base, width=2, style=Qt.PenStyle.DotLine)
+            
+            self.curvas_is[vdc] = {
+                'nyq1': self.nyquist_plot.plot(pen=pen_ch1, symbol='o', symbolSize=5, symbolBrush=color_base, name=f"CH1 {vdc}V"),
+                'nyq2': self.nyquist_plot.plot(pen=pen_ch2, symbol='s', symbolSize=5, symbolBrush=color_base, name=f"CH2 {vdc}V"),
+                'nyq_diff': self.nyquist_plot.plot(pen=pen_diff, symbol='t', symbolSize=6, symbolBrush=color_base, name=f"ΔZ {vdc}V"),
+                
+                'r1': self.bode_r_plot.plot(pen=pen_ch1, name=f"CH1 {vdc}V"),
+                'r2': self.bode_r_plot.plot(pen=pen_ch2, name=f"CH2 {vdc}V"),
+                'r_diff': self.bode_r_plot.plot(pen=pen_diff, name=f"ΔZ {vdc}V"),
+                
+                'x1': self.bode_x_plot.plot(pen=pen_ch1, name=f"CH1 {vdc}V"),
+                'x2': self.bode_x_plot.plot(pen=pen_ch2, name=f"CH2 {vdc}V"),
+                'x_diff': self.bode_x_plot.plot(pen=pen_diff, name=f"ΔZ {vdc}V"),
+            }
+
+        # 2. Extraer el diccionario correspondiente y guardar los datos
+        d = self.data_is[vdc]
+        d['f'].append(freq)
+        d['r1'].append(r1)
+        d['x1'].append(x1)
         
-        # Canal 1
-        self.data_is_r.append(r1)
-        self.data_is_x_neg.append(-x1) 
-        self.data_is_z.append(z1)
-        self.data_is_theta.append(theta1)
-        
-        # Canal 2
         if not math.isnan(r2):
-            self.data_is_r_ch2.append(r2)
-            self.data_is_x_neg_ch2.append(-x2)
-            self.data_is_z_ch2.append(z2)
-            self.data_is_theta_ch2.append(theta2)
+            d['r2'].append(r2)
+            d['x2'].append(x2)
+            d['dr'].append(r1 - r2)
+            d['dx'].append(x1 - x2)
         
-        # Render
-        self.nyquist_curve.setData(self.data_is_r, self.data_is_x_neg)
-        self.bode_mag_curve.setData(self.data_is_f, self.data_is_z)
-        self.bode_pha_curve.setData(self.data_is_f, self.data_is_theta)
+        # 3. Renderizar las curvas específicas de este Vdc
+        c = self.curvas_is[vdc]
+        c['nyq1'].setData(d['r1'], [-x for x in d['x1']]) # Convención: -Imaginario en Nyquist
+        c['r1'].setData(d['f'], d['r1'])
+        c['x1'].setData(d['f'], d['x1']) # Bode X en Y real
         
-        if self.data_is_r_ch2:
-            self.nyquist_curve_ch2.setData(self.data_is_r_ch2, self.data_is_x_neg_ch2)
-            self.bode_mag_curve_ch2.setData(self.data_is_f, self.data_is_z_ch2)
-            self.bode_pha_curve_ch2.setData(self.data_is_f, self.data_is_theta_ch2)
+        if len(d['r2']) > 0:
+            c['nyq2'].setData(d['r2'], [-x for x in d['x2']])
+            c['r2'].setData(d['f'], d['r2'])
+            c['x2'].setData(d['f'], d['x2'])
+            
+            c['nyq_diff'].setData(d['dr'], [-x for x in d['dx']])
+            c['r_diff'].setData(d['f'], d['dr'])
+            c['x_diff'].setData(d['f'], d['dx'])
 
     def _limpiar_datos_graficos(self):
         # Arrays I-V y Termodinámicos
@@ -845,18 +1043,15 @@ class IVMeasurementApp(QMainWindow):
         self.data_i_rinst_ch2, self.data_rinst_ch2, self.data_t_rinst_ch2 = [], [], []
         self.data_i_rrem_ch2, self.data_rrem_ch2, self.data_t_rrem_ch2 = [], [], []
 
-        # Arrays Espectroscopía de Impedancia (Canal 1)
-        self.data_is_f = []
-        self.data_is_r = []
-        self.data_is_x_neg = [] 
-        self.data_is_z = []
-        self.data_is_theta = []
+        # Limpiar gráficos de Espectroscopía (si ya fueron inicializados)
+        if hasattr(self, 'nyquist_plot'):
+            self.nyquist_plot.clear()
+            self.bode_r_plot.clear()
+            self.bode_x_plot.clear()
 
-        # Arrays Espectroscopía de Impedancia (Canal 2)
-        self.data_is_r_ch2 = []
-        self.data_is_x_neg_ch2 = []
-        self.data_is_z_ch2 = []
-        self.data_is_theta_ch2 = []
+        # Diccionarios dinámicos para agrupar barridos múltiples (Vdc)
+        self.data_is = {}
+        self.curvas_is = {}
 
     # ==========================================
     # LÓGICA DE CONTROL (SLOTS)
@@ -1124,41 +1319,40 @@ class IVMeasurementApp(QMainWindow):
                         # ---------------------------------------------------------
                         if "Freq (Hz)" in fila:
                             f_val = float(fila["Freq (Hz)"])
+                            vdc = float(fila.get("Vdc (V)", 0.0)) # Compatibilidad hacia atrás
                             
-                            if "R_ch1 (Ohm)" in fila: # Formato Nuevo (Matriz)
+                            if vdc not in self.data_is:
+                                self.data_is[vdc] = {'f':[], 'r1':[], 'x1':[], 'r2':[], 'x2':[], 'dr':[], 'dx':[]}
+                                
+                            d = self.data_is[vdc]
+                            
+                            if "R_ch1 (Ohm)" in fila: # Formato Matriz
                                 r1 = float(fila["R_ch1 (Ohm)"])
                                 x1 = float(fila["X_ch1 (Ohm)"])
-                                z1 = float(fila["|Z|_ch1 (Ohm)"])
-                                t1 = float(fila["Theta_ch1 (Deg)"])
                                 
                                 if not math.isnan(r1):
-                                    self.data_is_f.append(f_val)
-                                    self.data_is_r.append(r1)
-                                    self.data_is_x_neg.append(-x1)
-                                    self.data_is_z.append(z1)
-                                    self.data_is_theta.append(t1)
+                                    d['f'].append(f_val)
+                                    d['r1'].append(r1)
+                                    d['x1'].append(x1)
                                     
                                 r2_str = fila.get("R_ch2 (Ohm)", "nan")
                                 if r2_str.strip() and r2_str.strip().lower() != 'nan':
-                                    self.data_is_r_ch2.append(float(r2_str))
-                                    self.data_is_x_neg_ch2.append(-float(fila["X_ch2 (Ohm)"]))
-                                    self.data_is_z_ch2.append(float(fila["|Z|_ch2 (Ohm)"]))
-                                    self.data_is_theta_ch2.append(float(fila["Theta_ch2 (Deg)"]))
+                                    r2 = float(r2_str)
+                                    x2 = float(fila["X_ch2 (Ohm)"])
+                                    d['r2'].append(r2)
+                                    d['x2'].append(x2)
+                                    d['dr'].append(r1 - r2)
+                                    d['dx'].append(x1 - x2)
                                     
-                            elif "R (Ohm)" in fila: # Formato Viejo (Sin Matriz)
+                            elif "R (Ohm)" in fila: # Formato Viejo
                                 r1 = float(fila["R (Ohm)"])
                                 x1 = float(fila["X (Ohm)"])
-                                z1 = float(fila["|Z| (Ohm)"])
-                                t1 = float(fila["Theta (Deg)"])
-                                
                                 if not math.isnan(r1):
-                                    self.data_is_f.append(f_val)
-                                    self.data_is_r.append(r1)
-                                    self.data_is_x_neg.append(-x1)
-                                    self.data_is_z.append(z1)
-                                    self.data_is_theta.append(t1)
+                                    d['f'].append(f_val)
+                                    d['r1'].append(r1)
+                                    d['x1'].append(x1)
                             
-                            continue # CRÍTICO: Salta al siguiente loop, evita lógica I-V
+                            continue # CRÍTICO: Salta al siguiente loop
                             
                         # ---------------------------------------------------------
                         # 2. I-V / RELAJACIÓN (Formato Nuevo K224 + 34420A)
@@ -1233,19 +1427,43 @@ class IVMeasurementApp(QMainWindow):
             self.rrem_curve_ch2.setData(self.data_i_rrem_ch2, self.data_rrem_ch2)
             
             # --- RENDER: Actualizar Gráficos de Espectroscopía ---
-            self.nyquist_curve.setData(self.data_is_r, self.data_is_x_neg)
-            self.bode_mag_curve.setData(self.data_is_f, self.data_is_z)
-            self.bode_pha_curve.setData(self.data_is_f, self.data_is_theta)
-            
-            if len(self.data_is_r_ch2) > 0:
-                self.nyquist_curve_ch2.setData(self.data_is_r_ch2, self.data_is_x_neg_ch2)
-                self.bode_mag_curve_ch2.setData(self.data_is_f, self.data_is_z_ch2)
-                self.bode_pha_curve_ch2.setData(self.data_is_f, self.data_is_theta_ch2)
-            else:
-                # Si el archivo no tiene CH2, vaciar las curvas rojas
-                self.nyquist_curve_ch2.setData([], [])
-                self.bode_mag_curve_ch2.setData([], [])
-                self.bode_pha_curve_ch2.setData([], [])
+            for i, (vdc, d) in enumerate(self.data_is.items()):
+                color_base = pg.intColor(i, hues=9)
+                pen_ch1 = pg.mkPen(color=color_base, width=2)
+                pen_ch2 = pg.mkPen(color=color_base, width=2, style=Qt.PenStyle.DashLine)
+                pen_diff = pg.mkPen(color=color_base, width=2, style=Qt.PenStyle.DotLine)
+                
+                self.curvas_is[vdc] = {
+                    'nyq1': self.nyquist_plot.plot(pen=pen_ch1, symbol='o', symbolSize=5, symbolBrush=color_base, name=f"CH1 {vdc}V"),
+                    'nyq2': self.nyquist_plot.plot(pen=pen_ch2, symbol='s', symbolSize=5, symbolBrush=color_base, name=f"CH2 {vdc}V"),
+                    'nyq_diff': self.nyquist_plot.plot(pen=pen_diff, symbol='t', symbolSize=6, symbolBrush=color_base, name=f"ΔZ {vdc}V"),
+                    'r1': self.bode_r_plot.plot(pen=pen_ch1, name=f"CH1 {vdc}V"),
+                    'r2': self.bode_r_plot.plot(pen=pen_ch2, name=f"CH2 {vdc}V"),
+                    'r_diff': self.bode_r_plot.plot(pen=pen_diff, name=f"ΔZ {vdc}V"),
+                    'x1': self.bode_x_plot.plot(pen=pen_ch1, name=f"CH1 {vdc}V"),
+                    'x2': self.bode_x_plot.plot(pen=pen_ch2, name=f"CH2 {vdc}V"),
+                    'x_diff': self.bode_x_plot.plot(pen=pen_diff, name=f"ΔZ {vdc}V"),
+                }
+                
+                c = self.curvas_is[vdc]
+                c['nyq1'].setData(d['r1'], [-x for x in d['x1']])
+                c['r1'].setData(d['f'], d['r1'])
+                c['x1'].setData(d['f'], d['x1'])
+                
+                if len(d['r2']) > 0:
+                    c['nyq2'].setData(d['r2'], [-x for x in d['x2']])
+                    c['r2'].setData(d['f'], d['r2'])
+                    c['x2'].setData(d['f'], d['x2'])
+                    c['nyq_diff'].setData(d['dr'], [-x for x in d['dx']])
+                    c['r_diff'].setData(d['f'], d['dr'])
+                    c['x_diff'].setData(d['f'], d['dx'])
+                else:
+                    c['nyq2'].setData([], [])
+                    c['r2'].setData([], [])
+                    c['x2'].setData([], [])
+                    c['nyq_diff'].setData([], [])
+                    c['r_diff'].setData([], [])
+                    c['x_diff'].setData([], [])
             
             # Limpiar cursores
             self.iv_last.setData([], [])

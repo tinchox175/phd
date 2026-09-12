@@ -81,7 +81,9 @@ def plot_bias_sweeps(directories):
         ax_nyq.set_ylabel(r'-Im(Z) [$\Omega$]', fontsize=FONT_LABEL)
         ax_nyq.tick_params(axis='both', labelsize=FONT_TICK)
         ax_nyq.grid(True, linestyle='--', alpha=0.5)
-        ax_nyq.set_aspect('equal', adjustable='datalim')
+        ax_nyq.set_xlim(-26000, 10000)
+        ax_nyq.set_ylim(-5000,34000)
+        # ax_nyq.set_aspect('equal', adjustable='datalim')
         
         # Style Bode Mag
         ax_mag.set_title(f'[{dir_name}] Bode Mag', fontsize=FONT_TITLE, fontweight='bold')

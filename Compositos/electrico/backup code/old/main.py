@@ -13,11 +13,9 @@ import pyqtgraph as pg
 import json
 
 # Import the View (UI) and Model (Hardware)
-from IVsuplemento import (ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, 
-                          ParametrosRelajacionPane, TemperaturaTab, ControlEspectroscopiaPane, 
-                          EspectroscopiaTab, PulsosTransientesTab)
+from IVsuplemento import ParametersPane, InstantPane, ParametrosK224Pane, Lecturas34420APane, ParametrosRelajacionPane, TemperaturaTab, ControlEspectroscopiaPane, EspectroscopiaTab
 
-from hardware import HiloMedicionDual, HiloTemperatura, HiloEspectroscopia, HiloCorreccionSpot, HiloPulsos
+from hardware import HiloMedicionDual, HiloTemperatura, HiloEspectroscopia, HiloCorreccionSpot
 class ConfiguracionGeneralDialog(QDialog):
     def __init__(self, config_actual, parent=None):
         super().__init__(parent)
@@ -222,8 +220,7 @@ class IVMeasurementApp(QMainWindow):
         self.worker = HiloMedicionDual(self.estado_compartido)
         self.worker_temp = HiloTemperatura(self.estado_compartido) 
         self.worker_is = HiloEspectroscopia(self.estado_compartido) # <-- NUEVO
-        self.worker_pulsos = HiloPulsos(self.estado_compartido)
-
+        
         self._limpiar_datos_graficos()
         self._setup_menu()
         self._setup_ui()
@@ -350,9 +347,7 @@ class IVMeasurementApp(QMainWindow):
         self.relajacion_tab = RelajacionTab() 
         self.temperatura_tab = TemperaturaTab()
         self.espectroscopia_tab = EspectroscopiaTab() 
-        self.pulsos_tab = PulsosTransientesTab()
-
-        self.setup_tabs.addTab(self.pulsos_tab, "Transientes (Osc + AFG)")
+        
         self.setup_tabs.addTab(self.espectroscopia_tab, "Espectroscopía (TH2832)")
         self.setup_tabs.addTab(self.dual_inst_tab, "Setup: K224 + 34420A")
         self.setup_tabs.addTab(self.relajacion_tab, "Relajación") 
@@ -454,46 +449,6 @@ class IVMeasurementApp(QMainWindow):
         bottom_row_layout.addWidget(self.bode_pane)
         self.bode_pane.hide()
 
-        # --- PANELES TRANSIENTES (PULSOS) ---
-        self.pulsos_pane = QWidget()
-        pulsos_layout = QHBoxLayout(self.pulsos_pane)
-        pulsos_layout.setContentsMargins(0,0,0,0)
-        
-        self.pt_drive_pane = QGroupBox("Señales de Excitación (Drive)")
-        pt_drive_lay = QVBoxLayout()
-        self.pt_drive_plot = pg.PlotWidget()
-        self._style_plot(self.pt_drive_plot, "Tiempo (s)", "Amplitud (V)")
-        self.pt_drive_plot.addLegend()
-        self.pt_ch1_curve = self.pt_drive_plot.plot(pen=pg.mkPen('b', width=2), name="CH1 Supply")
-        self.pt_ch2_curve = self.pt_drive_plot.plot(pen=pg.mkPen('r', width=2), name="CH2 Resistor")
-        pt_drive_lay.addWidget(self.pt_drive_plot)
-        self.pt_drive_pane.setLayout(pt_drive_lay)
-        pulsos_layout.addWidget(self.pt_drive_pane)
-
-        self.pt_sense_pane = QGroupBox("Señales Sensadas (Sense)")
-        pt_sense_lay = QVBoxLayout()
-        self.pt_sense_plot = pg.PlotWidget()
-        self._style_plot(self.pt_sense_plot, "Tiempo (s)", "Amplitud (V)")
-        self.pt_sense_plot.addLegend()
-        self.pt_ch3_curve = self.pt_sense_plot.plot(pen=pg.mkPen('g', width=2), name="CH3 Sense+")
-        self.pt_ch4_curve = self.pt_sense_plot.plot(pen=pg.mkPen('y', width=2), name="CH4 Sense-")
-        pt_sense_lay.addWidget(self.pt_sense_plot)
-        self.pt_sense_pane.setLayout(pt_sense_lay)
-        pulsos_layout.addWidget(self.pt_sense_pane)
-
-        self.pt_iv_pane = QGroupBox("Curva I-V Dinámica (Filtrada)")
-        pt_iv_lay = QVBoxLayout()
-        self.pt_iv_plot = pg.PlotWidget()
-        self._style_plot(self.pt_iv_plot, "Voltaje Muestra (V)", "Corriente Muestra (A)")
-        self.pt_iv_plot.addLegend()
-        self.pt_iv_curve = self.pt_iv_plot.plot(pen=pg.mkPen('m', width=2), name="Transient I-V")
-        pt_iv_lay.addWidget(self.pt_iv_plot)
-        self.pt_iv_pane.setLayout(pt_iv_lay)
-        pulsos_layout.addWidget(self.pt_iv_pane)
-        
-        bottom_row_layout.addWidget(self.pulsos_pane)
-        self.pulsos_pane.hide() # Oculto por defecto
-
         # ==========================================
         # CRÍTICO: EXPANDIR LOS GRÁFICOS
         # ==========================================
@@ -515,16 +470,13 @@ class IVMeasurementApp(QMainWindow):
         """Muestra u oculta los gráficos dependiendo del modo activo."""
         nombre_pestana = self.setup_tabs.tabText(index)
         es_is = "Espectroscopía" in nombre_pestana
-        es_pulsos = "Transientes" in nombre_pestana
         
-        self.iv_plot_pane.setVisible(not es_is and not es_pulsos)
-        self.res_plot_pane.setVisible(not es_is and not es_pulsos)
-        self.vt_plot_pane.setVisible(not es_is and not es_pulsos)
+        self.iv_plot_pane.setVisible(not es_is)
+        self.res_plot_pane.setVisible(not es_is)
+        self.vt_plot_pane.setVisible(not es_is)
         
         self.nyquist_pane.setVisible(es_is)
         self.bode_pane.setVisible(es_is)
-        
-        self.pulsos_pane.setVisible(es_pulsos)
         
         if nombre_pestana == "Relajación":
             self.res_plot.setLabel('bottom', "Tiempo (min)")
@@ -578,7 +530,6 @@ class IVMeasurementApp(QMainWindow):
         self.setup_tabs.currentChanged.connect(self._al_cambiar_pestana)
         self._setup_conexiones_temp()
         self._setup_conexiones_is() # <--- ¡ESTA ES LA LÍNEA QUE FALTABA!
-        self._setup_conexiones_pulsos()
 
         t_pane = self.temperatura_tab.params_pane
         t_pane.btn_medir.clicked.connect(self._iniciar_medicion_temp)
@@ -588,62 +539,6 @@ class IVMeasurementApp(QMainWindow):
         t_pane.btn_aplicar.clicked.connect(self._sincronizar_parametros_temp) 
         
         self.worker_temp.datos_temp.connect(self._actualizar_graficos_termodinamicos)
-
-    def _setup_conexiones_pulsos(self):
-        p_pane = self.pulsos_tab.params_pane
-        p_pane.btn_medir.clicked.connect(self._iniciar_medicion_pulsos)
-        p_pane.btn_detencion.clicked.connect(self.worker_pulsos.detener_medicion)
-        self.worker_pulsos.datos_pulso.connect(self._actualizar_graficos_pulsos)
-        self.worker_pulsos.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
-        self.worker_pulsos.error_detectado.connect(self._mostrar_error)
-
-    def _iniciar_medicion_pulsos(self):
-        if self.worker_pulsos.corriendo: return
-        p_pane = self.pulsos_tab.params_pane
-        
-        try:
-            freqs = [float(x.strip()) for x in p_pane.freqs.text().split(',')]
-            amps = [float(x.strip()) for x in p_pane.amps.text().split(',')]
-        except ValueError:
-            self._mostrar_error("Frecuencias o amplitudes inválidas. Use números separados por comas.")
-            return
-
-        ruta_inicial = self.directorio_defecto
-        if ruta_inicial:
-            import time
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            ruta_inicial = os.path.join(ruta_inicial, f"transientes_{timestamp}")
-            
-        save_folder = QFileDialog.getExistingDirectory(self, "Seleccionar Carpeta para Guardar Burst CSVs", ruta_inicial)
-        if not save_folder: return
-
-        self.estado_compartido.update({
-            'frecuencias_pulsos': freqs,
-            'amplitudes_pulsos': amps,
-            'r_limit': p_pane.r_limit.value(),
-            'max_voltage_pulse': p_pane.v_max.value(),
-            'wave_shape': p_pane.forma.currentText(),
-            'num_cycles': p_pane.ciclos.value(),
-            'pulse_width': p_pane.ancho.value(),
-            'edge_time': p_pane.flanco.value(),
-            'use_sync_cable': p_pane.chk_sync.isChecked(),
-            'save_folder': save_folder
-        })
-        
-        self.pt_ch1_curve.setData([], [])
-        self.pt_ch2_curve.setData([], [])
-        self.pt_ch3_curve.setData([], [])
-        self.pt_ch4_curve.setData([], [])
-        self.pt_iv_curve.setData([], [])
-        
-        self.worker_pulsos.iniciar_medicion()
-
-    def _actualizar_graficos_pulsos(self, freq, amp, time_axis, v1, v2, v3, v4, v_dut_filt, current_filt):
-        self.pt_ch1_curve.setData(time_axis, v1)
-        self.pt_ch2_curve.setData(time_axis, v2)
-        self.pt_ch3_curve.setData(time_axis, v3)
-        self.pt_ch4_curve.setData(time_axis, v4)
-        self.pt_iv_curve.setData(v_dut_filt, current_filt)
 
     # Añadir a _setup_connections(self):
     def _setup_conexiones_temp(self):

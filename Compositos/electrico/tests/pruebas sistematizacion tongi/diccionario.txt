@@ -1,0 +1,4 @@
+c=ambos contactos
+c1=lcur
+c2=hcur
+d=lpot-hpot
