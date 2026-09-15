@@ -1168,11 +1168,19 @@ class HiloEspectroscopia(QThread):
         lista_vdc = self.estado.get('lista_vdc', [0.0])
         frecuencias = self.estado.get('frecuencias', [])
         
+        # Extraer variables de estado para el guardado
+        vac = self.estado.get('vac', 0.1)
+        speed = self.estado.get('speed', "MED")
+        avg = self.estado.get('avg', 1)
+        rsou = self.estado.get('rsou', 100)
+        rango = self.estado.get('rango', "AUTO")
+        trig_delay = self.estado.get('trig_delay', 0.0)
+
         encabezado = [
             "Tiempo (min)", "Vdc (V)", "Freq (Hz)", 
             "R_ch1 (Ohm)", "X_ch1 (Ohm)", "|Z|_ch1 (Ohm)", "Theta_ch1 (Deg)", "Vm_ch1 (V)", "Im_ch1 (A)",
             "R_ch2 (Ohm)", "X_ch2 (Ohm)", "|Z|_ch2 (Ohm)", "Theta_ch2 (Deg)", "Vm_ch2 (V)", "Im_ch2 (A)",
-            "Status"
+            "Status", "Vac (Vrms)", "ALC", "Speed", "Avg Pts", "Rsou (Ohm)", "Range", "Trig Delay (s)", "Matriz"
         ]
         with open(archivo_csv, 'w', newline='') as f:
             csv.writer(f).writerow(encabezado)
@@ -1254,7 +1262,12 @@ class HiloEspectroscopia(QThread):
                 self.datos_is.emit(vdc, freq, r1, x1, z1, theta1, r2, x2, z2, theta2, t_min, status_general)
                 
                 with open(archivo_csv, 'a', newline='') as f:
-                    csv.writer(f).writerow([f"{t_min:.4f}", vdc, freq, r1, x1, z1, theta1, vm1, im1, r2, x2, z2, theta2, vm2, im2, status_general])
+                    csv.writer(f).writerow([
+                        f"{t_min:.4f}", vdc, freq, 
+                        r1, x1, z1, theta1, vm1, im1, 
+                        r2, x2, z2, theta2, vm2, im2, 
+                        status_general, vac, alc_habilitado, speed, avg, rsou, rango, trig_delay, usa_matriz
+                    ])
 
         self.estado_msg.emit("Espectroscopía Finalizada")
         self.lcr.set_vdc(0.0)
