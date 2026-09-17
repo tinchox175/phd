@@ -347,6 +347,7 @@ class IVMeasurementApp(QMainWindow):
         # TOP ROW: The Setup Tabs
         # ==========================================
         self.setup_tabs = QTabWidget()
+        
         self.smu_tab = SMUControlTab()
         self.dual_inst_tab = DualInstrumentControlTab()
         self.relajacion_tab = RelajacionTab() 
@@ -459,84 +460,78 @@ class IVMeasurementApp(QMainWindow):
         # --- PANELES TRANSIENTES (PULSOS) RE-ESTRUCTURADOS EN GRID ---
         self.pulsos_pane = QWidget()
         self.pulsos_pane.setMinimumHeight(350) 
-        pulsos_layout = QGridLayout(self.pulsos_pane)
-        pulsos_layout.setContentsMargins(0,0,0,0)
+        self.pulsos_pane.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
-        # 1. Señales Drive
-        self.pt_drive_pane = QGroupBox("Señales de Excitación (Drive)")
-        pt_drive_lay = QVBoxLayout()
-        self.pt_drive_plot = pg.PlotWidget()
+        pulsos_layout = QGridLayout(self.pulsos_pane)
+        pulsos_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # REPLICANDO GRIDSPEC
+        pulsos_layout.setColumnStretch(0, 10)
+        pulsos_layout.setColumnStretch(1, 10)
+        pulsos_layout.setRowStretch(0, 10)
+        pulsos_layout.setRowStretch(1, 10)
+        pulsos_layout.setRowStretch(2, 12)
+
+        # 1. Row 0, Col 0: Drive Traces (Sin GroupBox ni título interno)
+        self.pt_drive_plot = pg.PlotWidget() 
         self._style_plot(self.pt_drive_plot, "Tiempo (ms)", "Amplitud (V)") 
         self.pt_drive_plot.addLegend()
         self.pt_ch1_curve = self.pt_drive_plot.plot(pen=pg.mkPen('#1f77b4', width=2), name="CH1 Supply")
         self.pt_ch2_curve = self.pt_drive_plot.plot(pen=pg.mkPen('#ff7f0e', width=2), name="CH2 Resistor")
-        pt_drive_lay.addWidget(self.pt_drive_plot)
-        self.pt_drive_pane.setLayout(pt_drive_lay)
-        pulsos_layout.addWidget(self.pt_drive_pane, 0, 0)
+        pulsos_layout.addWidget(self.pt_drive_plot, 0, 0)
 
-        # 2. Señales Sense
-        self.pt_sense_pane = QGroupBox("Señales Sensadas (Sense)")
-        pt_sense_lay = QVBoxLayout()
-        self.pt_sense_plot = pg.PlotWidget()
+        # 2. Row 1, Col 0: Sense Traces (Sin GroupBox ni título interno)
+        self.pt_sense_plot = pg.PlotWidget() 
         self._style_plot(self.pt_sense_plot, "Tiempo (ms)", "Amplitud (mV)") 
         self.pt_sense_plot.addLegend()
         self.pt_ch3_curve = self.pt_sense_plot.plot(pen=pg.mkPen('#2ca02c', width=2), name="CH3 Sense+")
         self.pt_ch4_curve = self.pt_sense_plot.plot(pen=pg.mkPen('#d62728', width=2), name="CH4 Sense-")
         self.pt_sense_plot.setXLink(self.pt_drive_plot) # Sincronizar zoom X
-        pt_sense_lay.addWidget(self.pt_sense_plot)
-        self.pt_sense_pane.setLayout(pt_sense_lay)
-        pulsos_layout.addWidget(self.pt_sense_pane, 1, 0)
+        pulsos_layout.addWidget(self.pt_sense_plot, 1, 0)
 
-        # 3. All Channels Overlay (Twin Y-Axis)
-        self.pt_over_pane = QGroupBox("All Channels Overlay")
-        pt_over_lay = QVBoxLayout()
-        self.pt_over_plot = pg.PlotWidget()
+        # 3. Row 2, Col 0: Overlay (Sin GroupBox ni título interno)
+        self.pt_over_plot = pg.PlotWidget() 
         self._style_plot(self.pt_over_plot, "Tiempo (ms)", "Drive (V)")
         self.pt_over_plot.setXLink(self.pt_drive_plot)
         
-        # Crear eje Y derecho para Sense (mV)
-        self.pt_over_plot.showAxis('right') # <-- Comando nativo correcto
+        self.pt_over_plot.showAxis('right') 
         self.pt_over_vb = pg.ViewBox()
         self.pt_over_plot.scene().addItem(self.pt_over_vb)
         self.pt_over_plot.getAxis('right').linkToView(self.pt_over_vb)
         self.pt_over_vb.setXLink(self.pt_over_plot)
         self.pt_over_plot.getAxis('right').setLabel('Sense (mV)')
 
-        # Mantener el ViewBox alineado al redimensionar
         def update_views():
-            self.pt_over_vb.setGeometry(self.pt_over_plot.getViewBox().sceneBoundingRect())
-            self.pt_over_vb.linkedViewChanged(self.pt_over_plot.getViewBox(), self.pt_over_vb.XAxis)
-            
+            try:
+                self.pt_over_vb.setGeometry(self.pt_over_plot.getViewBox().sceneBoundingRect())
+                self.pt_over_vb.linkedViewChanged(self.pt_over_plot.getViewBox(), self.pt_over_vb.XAxis)
+            except Exception:
+                pass
+                
         self.pt_over_plot.getViewBox().sigResized.connect(update_views)
-        update_views() # <-- CRÍTICO: Forzar la geometría inicial antes del primer resize
 
         self.pt_over_plot.addLegend()
-        self.pt_over_ch1 = self.pt_over_plot.plot(pen=pg.mkPen('#1f77b4', width=2, style=Qt.PenStyle.SolidLine), name="CH1")
-        self.pt_over_ch2 = self.pt_over_plot.plot(pen=pg.mkPen('#ff7f0e', width=2, style=Qt.PenStyle.SolidLine), name="CH2")
-        self.pt_over_ch3 = pg.PlotCurveItem(pen=pg.mkPen('#2ca02c', width=2, style=Qt.PenStyle.DashLine), name="CH3")
-        self.pt_over_ch4 = pg.PlotCurveItem(pen=pg.mkPen('#d62728', width=2, style=Qt.PenStyle.DashLine), name="CH4")
+        self.pt_over_ch1 = self.pt_over_plot.plot(pen=pg.mkPen('#1f77b4', width=2, style=Qt.PenStyle.SolidLine), name="CH1 (V)")
+        self.pt_over_ch2 = self.pt_over_plot.plot(pen=pg.mkPen('#ff7f0e', width=2, style=Qt.PenStyle.SolidLine), name="CH2 (V)")
+        self.pt_over_ch3 = pg.PlotCurveItem(pen=pg.mkPen('#2ca02c', width=2, style=Qt.PenStyle.DashLine), name="CH3 (mV)")
+        self.pt_over_ch4 = pg.PlotCurveItem(pen=pg.mkPen('#d62728', width=2, style=Qt.PenStyle.DashLine), name="CH4 (mV)")
         self.pt_over_vb.addItem(self.pt_over_ch3)
         self.pt_over_vb.addItem(self.pt_over_ch4)
         
-        pt_over_lay.addWidget(self.pt_over_plot)
-        self.pt_over_pane.setLayout(pt_over_lay)
-        pulsos_layout.addWidget(self.pt_over_pane, 2, 0)
+        pulsos_layout.addWidget(self.pt_over_plot, 2, 0)
 
-        # 4. Curva I-V (RAW + Filtrada)
-        self.pt_iv_pane = QGroupBox("Curva I-V (Raw + Filtered)")
-        pt_iv_lay = QVBoxLayout()
-        self.pt_iv_plot = pg.PlotWidget()
-        self._style_plot(self.pt_iv_plot, "Voltaje Muestra (mV)", "Corriente Muestra (µA)") 
+        # 4. Row 0, Col 1 (Spans 3 Rows): I-V Curve (Sin GroupBox ni título interno)
+        self.pt_iv_plot = pg.PlotWidget() 
+        self._style_plot(self.pt_iv_plot, "4-Wire Voltage Drop (mV)", "Sample Current (µA)") 
         self.pt_iv_plot.addLegend()
+        
         self.pt_iv_curve_raw = self.pt_iv_plot.plot(pen=pg.mkPen(color=(128,128,128,100), width=1), name="RAW")
-        self.pt_iv_curve_filt = self.pt_iv_plot.plot(pen=pg.mkPen('#9467bd', width=2), name="Filtrado")
+        self.pt_iv_curve_filt = self.pt_iv_plot.plot(pen=pg.mkPen('#9467bd', width=2), name="Filtered")
         
         self.pt_iv_plot.addLine(x=0, pen=pg.mkPen('k', width=1))
         self.pt_iv_plot.addLine(y=0, pen=pg.mkPen('k', width=1))
         
-        pt_iv_lay.addWidget(self.pt_iv_plot)
-        self.pt_iv_pane.setLayout(pt_iv_lay)
-        pulsos_layout.addWidget(self.pt_iv_pane, 0, 1, 3, 1) # Abarca las 3 filas
+        pulsos_layout.addWidget(self.pt_iv_plot, 0, 1, 3, 1) 
         
         bottom_row_layout.addWidget(self.pulsos_pane)
         self.pulsos_pane.hide()
@@ -564,6 +559,11 @@ class IVMeasurementApp(QMainWindow):
         es_is = "Espectroscopía" in nombre_pestana
         es_pulsos = "Transientes" in nombre_pestana
         
+        if es_pulsos:
+            self.setup_tabs.setMaximumHeight(260)
+        else:
+            self.setup_tabs.setMaximumHeight(16777215) # Constante máxima de Qt
+
         # 1. Paneles Estándar (I-V, Resistencia)
         if es_is or es_pulsos:
             self.iv_plot_pane.hide()
@@ -659,6 +659,43 @@ class IVMeasurementApp(QMainWindow):
         self.worker_pulsos.datos_pulso.connect(self._actualizar_graficos_pulsos)
         self.worker_pulsos.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
         self.worker_pulsos.error_detectado.connect(self._mostrar_error)
+        
+        # Conectar validación en vivo
+        p_pane.ancho.valueChanged.connect(self._validar_limites_pulso)
+        p_pane.flanco.valueChanged.connect(self._validar_limites_pulso)
+        p_pane.forma.currentTextChanged.connect(self._validar_limites_pulso)
+        p_pane.freqs.textChanged.connect(self._validar_limites_pulso) # <-- NUEVO
+
+    def _validar_limites_pulso(self, *args):
+        """Advierte si la geometría del pulso obligará al hardware a truncar los valores."""
+        p_pane = self.pulsos_tab.params_pane
+        
+        if p_pane.forma.currentText() != "PULS":
+            p_pane.lbl_warning_pulsos.setText("")
+            return
+            
+        ancho = p_pane.ancho.value()
+        flanco = p_pane.flanco.value()
+        warning_msg = ""
+        
+        # 1. Validación de Flanco vs Ancho
+        max_flanco = 0.625 * ancho
+        if flanco > max_flanco:
+            warning_msg += f"⚠ ALERTA: Flanco supera 62.5% del ancho (Máx: {max_flanco*1e9:.1f} ns). "
+            
+        # 2. Validación de Ancho vs Frecuencia (Período)
+        try:
+            freqs = [float(x.strip()) for x in p_pane.freqs.text().split(',') if x.strip()]
+            if freqs:
+                max_freq = max(freqs) # La frecuencia más alta tiene el período más restrictivo
+                min_period = 1.0 / max_freq
+                
+                if ancho >= min_period:
+                    warning_msg += f"⚠ ALERTA: Ancho ({ancho*1000:.1f} ms) supera el período de {max_freq}Hz ({min_period*1000:.2f} ms)."
+        except ValueError:
+            pass 
+            
+        p_pane.lbl_warning_pulsos.setText(warning_msg)
 
     def _iniciar_medicion_pulsos(self):
         if self.worker_pulsos.corriendo: return
@@ -695,11 +732,20 @@ class IVMeasurementApp(QMainWindow):
             'ruta_archivo_pulsos': ruta_archivo
         })
         
+        # --- REEMPLAZAR ESTE BLOQUE ---
         self.pt_ch1_curve.setData([], [])
         self.pt_ch2_curve.setData([], [])
         self.pt_ch3_curve.setData([], [])
         self.pt_ch4_curve.setData([], [])
-        self.pt_iv_curve.setData([], [])
+        
+        self.pt_over_ch1.setData([], [])
+        self.pt_over_ch2.setData([], [])
+        self.pt_over_ch3.setData([], [])
+        self.pt_over_ch4.setData([], [])
+        
+        self.pt_iv_curve_raw.setData([], [])
+        self.pt_iv_curve_filt.setData([], [])
+        # ------------------------------
         
         self.worker_pulsos.iniciar_medicion()
 
@@ -722,7 +768,7 @@ class IVMeasurementApp(QMainWindow):
         self.pt_over_ch3.setData(time_ms, v3_mv)
         self.pt_over_ch4.setData(time_ms, v4_mv)
         
-        # 4. I-V Curve (Raw calculation + Filtered)
+        # 4. I-V Curve
         v_dut_raw = (v4 - v3) * 1e3
         r_limit = self.pulsos_tab.params_pane.r_limit.value()
         current_raw = ((v1 - v2) / r_limit) * 1e6
@@ -821,23 +867,6 @@ class IVMeasurementApp(QMainWindow):
         self.data_i_rinst.append(T_act) # Usamos el eje X (Corriente) para guardar Temperatura
         self.rinst_curve.setData(self.data_i_rinst, self.data_rinst)
         self.res_plot.setLabel('bottom', "Temperatura (K)")
-
-    def _al_cambiar_pestana(self, index):
-        """Muestra u oculta los gráficos dependiendo del modo activo."""
-        nombre_pestana = self.setup_tabs.tabText(index)
-        es_is = "Espectroscopía" in nombre_pestana
-        
-        self.iv_plot_pane.setVisible(not es_is)
-        self.res_plot_pane.setVisible(not es_is)
-        self.vt_plot_pane.setVisible(not es_is)
-        
-        self.nyquist_pane.setVisible(es_is)
-        self.bode_pane.setVisible(es_is)
-        
-        if nombre_pestana == "Relajación":
-            self.res_plot.setLabel('bottom', "Tiempo (min)")
-        elif "K224" in nombre_pestana:
-            self.res_plot.setLabel('bottom', "Corriente (mA)")
 
     # Llama a esto desde tu _setup_connections original
     def _setup_conexiones_is(self):
@@ -1043,15 +1072,19 @@ class IVMeasurementApp(QMainWindow):
         self.data_i_rinst_ch2, self.data_rinst_ch2, self.data_t_rinst_ch2 = [], [], []
         self.data_i_rrem_ch2, self.data_rrem_ch2, self.data_t_rrem_ch2 = [], [], []
 
-        # Limpiar gráficos de Espectroscopía (si ya fueron inicializados)
         if hasattr(self, 'nyquist_plot'):
             self.nyquist_plot.clear()
             self.bode_r_plot.clear()
             self.bode_x_plot.clear()
 
-        # Diccionarios dinámicos para agrupar barridos múltiples (Vdc)
         self.data_is = {}
         self.curvas_is = {}
+        
+        # --- AÑADIDO: Arrays para cargar Transientes ---
+        self.data_pt_t = []
+        self.data_pt_v1, self.data_pt_v2 = [], []
+        self.data_pt_v3, self.data_pt_v4 = [], []
+        self.data_pt_vdut, self.data_pt_idut = [], []
 
     # ==========================================
     # LÓGICA DE CONTROL (SLOTS)
@@ -1307,26 +1340,38 @@ class IVMeasurementApp(QMainWindow):
             self._limpiar_datos_graficos()
             
             with open(ruta_archivo, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
+                # --- SOLUCIÓN LECTURA DE ARCHIVOS ---
+                # Filtrar comentarios (#) para que no rompan el csv.DictReader
+                lineas_limpias = (line for line in f if not line.startswith('#'))
+                reader = csv.DictReader(lineas_limpias)
                 
                 for fila in reader:
+                    # 1. TRANSIENTES (Osciloscopio + AFG)
+                    if "Time_s" in fila:
+                        self.data_pt_t.append(float(fila["Time_s"]))
+                        self.data_pt_v1.append(float(fila["CH1_V_Supply"]))
+                        self.data_pt_v2.append(float(fila["CH2_V_Resistor"]))
+                        self.data_pt_v3.append(float(fila["CH3_V_SenseP"]))
+                        self.data_pt_v4.append(float(fila["CH4_V_SenseN"]))
+                        self.data_pt_vdut.append(float(fila["V_Sample_Filt"]))
+                        self.data_pt_idut.append(float(fila["I_Sample_Filt"]))
+                        continue
+                        
                     try:
                         t = float(fila.get("Tiempo (min)", float('nan')))
                         is_smu = False
                         
-                        # ---------------------------------------------------------
-                        # 1. ESPECTROSCOPÍA DE IMPEDANCIA (IS)
-                        # ---------------------------------------------------------
+                        # 2. ESPECTROSCOPÍA DE IMPEDANCIA (IS)
                         if "Freq (Hz)" in fila:
                             f_val = float(fila["Freq (Hz)"])
-                            vdc = float(fila.get("Vdc (V)", 0.0)) # Compatibilidad hacia atrás
+                            vdc = float(fila.get("Vdc (V)", 0.0)) 
                             
                             if vdc not in self.data_is:
                                 self.data_is[vdc] = {'f':[], 'r1':[], 'x1':[], 'r2':[], 'x2':[], 'dr':[], 'dx':[]}
                                 
                             d = self.data_is[vdc]
                             
-                            if "R_ch1 (Ohm)" in fila: # Formato Matriz
+                            if "R_ch1 (Ohm)" in fila: 
                                 r1 = float(fila["R_ch1 (Ohm)"])
                                 x1 = float(fila["X_ch1 (Ohm)"])
                                 
@@ -1344,7 +1389,7 @@ class IVMeasurementApp(QMainWindow):
                                     d['dr'].append(r1 - r2)
                                     d['dx'].append(x1 - x2)
                                     
-                            elif "R (Ohm)" in fila: # Formato Viejo
+                            elif "R (Ohm)" in fila: 
                                 r1 = float(fila["R (Ohm)"])
                                 x1 = float(fila["X (Ohm)"])
                                 if not math.isnan(r1):
@@ -1352,19 +1397,15 @@ class IVMeasurementApp(QMainWindow):
                                     d['r1'].append(r1)
                                     d['x1'].append(x1)
                             
-                            continue # CRÍTICO: Salta al siguiente loop
+                            continue 
                             
-                        # ---------------------------------------------------------
-                        # 2. I-V / RELAJACIÓN (Formato Nuevo K224 + 34420A)
-                        # ---------------------------------------------------------
+                        # 3. I-V / RELAJACIÓN (Formato Nuevo K224 + 34420A)
                         elif "I pulso (mA)" in fila:
                             i_inst = float(fila["I pulso (mA)"])
                             r1_inst = float(fila["Rinst 1 (Ohm)"])
                             r2_inst = float(fila.get("Rinst 2 (Ohm)", float('nan')))
                             
-                        # ---------------------------------------------------------
-                        # 3. I-V (Formato Viejo B2902A SMU)
-                        # ---------------------------------------------------------
+                        # 4. I-V (Formato Viejo B2902A SMU)
                         elif "I pulso(mA)" in fila:
                             is_smu = True 
                             i_inst = float(fila["Iinst 1 (mA)"]) 
@@ -1372,7 +1413,7 @@ class IVMeasurementApp(QMainWindow):
                             r2_inst = float(fila.get("Rinst 2(Ohm)", float('nan')))
                             
                         else:
-                            continue # Ignorar si la fila no coincide con nada
+                            continue 
 
                         # Variables I-V compartidas
                         v1_inst = float(fila.get("Vinst 1 (V)", float('nan')))
@@ -1457,15 +1498,41 @@ class IVMeasurementApp(QMainWindow):
                     c['nyq_diff'].setData(d['dr'], [-x for x in d['dx']])
                     c['r_diff'].setData(d['f'], d['dr'])
                     c['x_diff'].setData(d['f'], d['dx'])
-                else:
-                    c['nyq2'].setData([], [])
-                    c['r2'].setData([], [])
-                    c['x2'].setData([], [])
-                    c['nyq_diff'].setData([], [])
-                    c['r_diff'].setData([], [])
-                    c['x_diff'].setData([], [])
             
-            # Limpiar cursores
+            # --- RENDER: Actualizar Gráficos de Transientes ---
+            if self.data_pt_t:
+                import numpy as np
+                t_ms = np.array(self.data_pt_t) * 1e3
+                v1_arr = np.array(self.data_pt_v1)
+                v2_arr = np.array(self.data_pt_v2)
+                v3_mv = np.array(self.data_pt_v3) * 1e3
+                v4_mv = np.array(self.data_pt_v4) * 1e3
+                
+                # Cargar Drive/Sense
+                self.pt_ch1_curve.setData(t_ms, v1_arr)
+                self.pt_ch2_curve.setData(t_ms, v2_arr)
+                self.pt_ch3_curve.setData(t_ms, v3_mv)
+                self.pt_ch4_curve.setData(t_ms, v4_mv)
+                
+                # --- SOLUCIÓN OVERLAY: Cargar los datos a la gráfica combinada ---
+                self.pt_over_ch1.setData(t_ms, v1_arr)
+                self.pt_over_ch2.setData(t_ms, v2_arr)
+                self.pt_over_ch3.setData(t_ms, v3_mv)
+                self.pt_over_ch4.setData(t_ms, v4_mv)
+                # -----------------------------------------------------------------
+                
+                # Cargar I-V
+                self.pt_iv_curve_filt.setData(np.array(self.data_pt_vdut) * 1e3, np.array(self.data_pt_idut) * 1e6)
+                
+                # Calcular el RAW en vivo usando el Resistor Límite actual de la UI
+                v_dut_raw = (np.array(self.data_pt_v4) - np.array(self.data_pt_v3)) * 1e3
+                r_limit = self.pulsos_tab.params_pane.r_limit.value()
+                i_dut_raw = ((v1_arr - v2_arr) / r_limit) * 1e6
+                self.pt_iv_curve_raw.setData(v_dut_raw, i_dut_raw)
+                
+                # Cambiar automáticamente a la pestaña de Transientes
+                self.setup_tabs.setCurrentWidget(self.pulsos_tab)
+            
             self.iv_last.setData([], [])
             self.iv_last_ch2.setData([], [])
             self.rinst_last.setData([], [])

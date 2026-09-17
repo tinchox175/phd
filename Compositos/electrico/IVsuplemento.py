@@ -685,20 +685,25 @@ class ControlPulsosTransientesPane(QGroupBox):
         layout.addWidget(QLabel("Ancho (s) [Modo PULS]"), 2, 2)
         self.ancho = QDoubleSpinBox()
         self.ancho.setDecimals(9)
-        self.ancho.setRange(1e-9, 10.0)
+        self.ancho.setRange(8e-9, 1999.9) # Mínimo absoluto de 8.0 ns según manual
         self.ancho.setValue(2000e-9)
         layout.addWidget(self.ancho, 3, 2)
 
         layout.addWidget(QLabel("Flanco (s) [Modo PULS]"), 2, 3)
         self.flanco = QDoubleSpinBox()
         self.flanco.setDecimals(9)
-        self.flanco.setRange(1e-9, 10.0)
+        self.flanco.setRange(5e-9, 1e-3) # Rango de 5.00 ns a 1.00 ms según manual
         self.flanco.setValue(50e-9)
         layout.addWidget(self.flanco, 3, 3)
         
         self.chk_sync = QCheckBox("Cable SYNC Externo Conectado")
         self.chk_sync.setChecked(False)
         layout.addWidget(self.chk_sync, 4, 0, 1, 2)
+
+        # --- NUEVA ETIQUETA DE ADVERTENCIA PARA PULSOS ---
+        self.lbl_warning_pulsos = QLabel(" ")
+        self.lbl_warning_pulsos.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 11px;")
+        layout.addWidget(self.lbl_warning_pulsos, 5, 0, 1, 4)
 
         btn_layout = QHBoxLayout()
         self.btn_medir = QPushButton("Iniciar Transientes")
@@ -708,8 +713,8 @@ class ControlPulsosTransientesPane(QGroupBox):
         
         btn_layout.addWidget(self.btn_medir)
         btn_layout.addWidget(self.btn_detencion)
-        layout.addLayout(btn_layout, 5, 0, 1, 4)
-        layout.setRowStretch(6, 1)
+        layout.addLayout(btn_layout, 6, 0, 1, 4) 
+        layout.setRowStretch(7, 1) 
         self.setLayout(layout)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 

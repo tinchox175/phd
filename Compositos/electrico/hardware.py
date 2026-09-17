@@ -49,8 +49,10 @@ class AgilentAFG:
         
         safe_buffer_width = period * 0.1 
         self.inst.write(f'SOUR:PULS:WIDT {safe_buffer_width}') 
-        self.inst.write(f'SOUR:PULS:TRAN:LEAD {actual_edge}') 
-        self.inst.write(f'SOUR:PULS:TRAN:TRA {actual_edge}')  
+        
+        # --- SOLUCIÓN SCPI: El 33250A usa un comando único para ambos flancos ---
+        self.inst.write(f'SOUR:PULS:TRAN {actual_edge}')  
+        
         self.inst.write(f'SOUR:PULS:WIDT {actual_width}')
         
     def set_bipolar_params(self, freq, amp):
@@ -73,11 +75,14 @@ class TektronixScope:
     def conectar(self, rm):
         self.inst = rm.open_resource(self.direccion)
         self.inst.timeout = self.timeout
+        # --- SOLUCIÓN CORTES DE ONDA: Expandir el buffer USB ---
+        # 10,000 puntos en ASCII pesan ~140 KB. PyVISA por defecto usa 20 KB y corta el resto.
+        self.inst.chunk_size = 204800 
         
+        self.inst.write('HEAD OFF')
         for ch in [1, 2, 3, 4]:
             self.inst.write(f'SEL:CH{ch} ON')
-            if ch <= 2: self.inst.write(f'CH{ch}:COUP DC')
-            else: self.inst.write(f'CH{ch}:COUP AC')
+            self.inst.write(f'CH{ch}:COUP DC')
             self.inst.write(f'CH{ch}:BWL 20')
             
         self.inst.write('ACQ:MOD HIR') 
@@ -94,10 +99,14 @@ class TektronixScope:
             max_safe_width = period - (1.6 * actual_edge)
             actual_width = min(target_width, max_safe_width)
             
-            active_pulse_time = (actual_edge * 2) + actual_width
-            total_time_needed = active_pulse_time * pulse_zoom_factor
-            total_time_needed = min(total_time_needed, period)
-            total_time_needed = max(total_time_needed, 10e-9) 
+            # SOLUCIÓN RÁFAGA: Respetar num_cycles para la forma de onda PULS
+            if num_cycles > 1:
+                total_time_needed = (num_cycles + 0.5) * period
+            else:
+                active_pulse_time = (actual_edge * 2) + actual_width
+                total_time_needed = active_pulse_time * pulse_zoom_factor
+                total_time_needed = min(total_time_needed, period)
+                total_time_needed = max(total_time_needed, 10e-9) 
         else:
             total_time_needed = (num_cycles + 1.5) * period
             
@@ -119,7 +128,7 @@ class TektronixScope:
         safe_scale = amp / 4.0 
         for ch in [1, 2, 3, 4]:
             self.inst.write(f'CH{ch}:SCA {safe_scale}')
-            self.inst.write(f'CH{ch}:POS 0') 
+            self.inst.write(f'CH{ch}:POS 0')
 
     def prepare_acquisition(self):
         self.inst.write('ACQ:STOPA SEQ') 
@@ -135,36 +144,72 @@ class TektronixScope:
                 return False
         return True
 
+    def _safe_get_curve(self):
+        """Descarga la curva e ignora caracteres corruptos o datos nulos como '-'."""
+        raw_str = self.inst.query('CURV?').strip()
+        # Eliminar prefijo de header si HEAD OFF falló o no se aplicó a tiempo
+        if "CURV" in raw_str.upper() or "CURVE" in raw_str.upper():
+            raw_str = raw_str.split(' ', 1)[-1]
+            
+        clean_data = []
+        for val in raw_str.split(','):
+            try:
+                clean_data.append(float(val))
+            except ValueError:
+                # En lugar de crashear el thread si lee "-", se fuerza un 0.0
+                clean_data.append(0.0)
+        return np.array(clean_data)
+
     def auto_scale_y(self):
         for ch in [1, 2, 3, 4]:
             try:
                 self.inst.write(f'DAT:SOU CH{ch}')
+                time.sleep(0.1) 
                 self.inst.write('DAT:ENC ASCI')
                 self.inst.write('DAT:WID 1')
+                
+                # --- SOLUCIÓN CORTES DE ONDA: Forzar transmisión completa ---
+                self.inst.write('DAT:STAR 1')
+                self.inst.write('DAT:STOP 10000')
+                
                 time.sleep(0.05)
                 y_mult = float(self.inst.query('WFMPre:YMULT?'))
                 y_zero = float(self.inst.query('WFMPre:YZERO?'))
                 y_off = float(self.inst.query('WFMPre:YOFF?'))
-                raw_data = np.array(self.inst.query_ascii_values('CURV?'))
-                volts = (raw_data - y_off) * y_mult + y_zero
-                vpp = np.max(volts) - np.min(volts)
-                if vpp > 0: 
-                    optimal_scale = max(vpp / 4.0, 0.001) 
-                    self.inst.write(f'CH{ch}:SCA {optimal_scale}')
+                
+                raw_data = self._safe_get_curve()
+                
+                if len(raw_data) > 0:
+                    volts = (raw_data - y_off) * y_mult + y_zero
+                    vpp = np.max(volts) - np.min(volts)
+                    if vpp > 0: 
+                        optimal_scale = max(vpp / 4.0, 0.01) 
+                        self.inst.write(f'CH{ch}:SCA {optimal_scale}')
             except:
                 pass 
         time.sleep(0.2)
 
     def get_waveform(self, channel):
         self.inst.write(f'DAT:SOU CH{channel}')
+        time.sleep(0.1) 
         self.inst.write('DAT:ENC ASCI')
         self.inst.write('DAT:WID 1')
+        
+        # --- SOLUCIÓN CORTES DE ONDA: Forzar transmisión completa ---
+        self.inst.write('DAT:STAR 1')
+        self.inst.write('DAT:STOP 10000')
+        
         time.sleep(0.05) 
         y_mult = float(self.inst.query('WFMPre:YMULT?'))
         y_zero = float(self.inst.query('WFMPre:YZERO?'))
         y_off = float(self.inst.query('WFMPre:YOFF?'))
         x_incr = float(self.inst.query('WFMPre:XINCR?'))
-        raw_data = np.array(self.inst.query_ascii_values('CURV?'))
+        
+        raw_data = self._safe_get_curve()
+        
+        if len(raw_data) == 0:
+            raw_data = np.zeros(10000) # Coincidir con la escala base
+            
         volts = (raw_data - y_off) * y_mult + y_zero
         return volts, x_incr
 
@@ -1414,11 +1459,17 @@ class HiloPulsos(QThread):
                 amp = max_voltage if raw_amp > max_voltage else raw_amp
                 self.estado_msg.emit(f"Sweeping: Freq = {freq} Hz, Amp = {amp} V")
                 
+                self.afg.configure_burst(wave_shape, num_cycles)
+
                 if wave_shape in ['SQU', 'PULS']:
                     self.afg.set_pulse_params(freq, amp, pulse_width, edge_time)
                 else:
                     self.afg.set_bipolar_params(freq, amp)
-                    
+                
+                # --- SOLUCIÓN ERROR DE BURST ---
+                # Re-aplicar ráfaga porque el AFG la desactiva al cambiar la frecuencia
+                self.afg.configure_burst(wave_shape, num_cycles)
+                
                 self.afg.output_state(True)
                 self.scope.auto_scale(freq, amp, wave_shape, pulse_width, edge_time, num_cycles, pulse_zoom, use_sync)
                 
@@ -1442,6 +1493,11 @@ class HiloPulsos(QThread):
                 v2, _ = self.scope.get_waveform(2)
                 v3, _ = self.scope.get_waveform(3)
                 v4, _ = self.scope.get_waveform(4)
+                
+                # --- SOLUCIÓN ERROR DE FORMAS (SHAPES) ---
+                # Forzar todos los arrays al tamaño mínimo devuelto por el bus USB
+                min_len = min(len(v1), len(v2), len(v3), len(v4))
+                v1, v2, v3, v4 = v1[:min_len], v2[:min_len], v3[:min_len], v4[:min_len]
                 
                 time_axis = np.arange(len(v1)) * dt
                 current = (v1 - v2) / r_limit
@@ -1479,5 +1535,20 @@ class HiloPulsos(QThread):
                     df.to_csv(filename, mode='a', index=False)
                     
         self.estado_msg.emit("Barrido de Transientes Finalizado")
-        if self.afg.inst: self.afg.output_state(False)
+        
+        # --- SOLUCIÓN: Liberar los puertos USB y GPIB ---
+        if self.afg.inst:
+            try:
+                self.afg.output_state(False)
+                self.afg.inst.close()
+            except:
+                pass
+                
+        if self.scope.inst:
+            try:
+                self.scope.inst.close()
+            except:
+                pass
+        # ------------------------------------------------
+        
         self.corriendo = False

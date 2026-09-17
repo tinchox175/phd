@@ -1,5 +1,5 @@
 {
-    "directorio_defecto": "",
+    "directorio_defecto": "/home/martin/LBT/phd/Compositos/electrico",
     "max_current_ma": 10.0,
     "k224": {
         "ancho_pulso": 0.1,
