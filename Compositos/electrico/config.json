@@ -1,5 +1,5 @@
 {
-    "directorio_defecto": "/home/martin/LBT/phd/Compositos/electrico",
+    "directorio_defecto": "/home/martin/LBT/phd/Compositos/electrico/Archivos/210926",
     "max_current_ma": 10.0,
     "k224": {
         "ancho_pulso": 0.1,
@@ -17,5 +17,17 @@
         "rsou": "100",
         "rango": "AUTO",
         "trig_delay": 0.0
+    },
+    "pulsos": {
+        "freqs": "10",
+        "amps": "0.15",
+        "r_limit": 1000000.0,
+        "v_max": 3.0,
+        "forma": "PULS",
+        "ciclos": 3,
+        "ancho": 0.1,
+        "flanco": 5e-08,
+        "sync": false,
+        "high_res": true
     }
 }

@@ -90,6 +90,15 @@ class TektronixScope:
         print(f"Osciloscopio Conectado: {self.direccion}")
         
     def auto_scale(self, freq, amp, wave_shape, pulse_width, edge_time, num_cycles, pulse_zoom_factor, use_sync):
+        # --- LÓGICA DINÁMICA DE ACOPLAMIENTO (AC/DC) ---
+        if wave_shape == 'SIN':
+            self.inst.write('CH1:COUP DC') 
+            for ch in [2, 3, 4]:
+                self.inst.write(f'CH{ch}:COUP AC')
+        else:
+            for ch in [1, 2, 3, 4]:
+                self.inst.write(f'CH{ch}:COUP DC')
+
         period = 1.0 / freq
         if wave_shape == 'PULS':
             target_width = max(pulse_width, 8e-9)
@@ -99,19 +108,37 @@ class TektronixScope:
             max_safe_width = period - (1.6 * actual_edge)
             actual_width = min(target_width, max_safe_width)
             
-            # SOLUCIÓN RÁFAGA: Respetar num_cycles para la forma de onda PULS
             if num_cycles > 1:
-                total_time_needed = (num_cycles + 0.5) * period
+                total_time_needed = (num_cycles + 3.0) * period
             else:
                 active_pulse_time = (actual_edge * 2) + actual_width
                 total_time_needed = active_pulse_time * pulse_zoom_factor
                 total_time_needed = min(total_time_needed, period)
                 total_time_needed = max(total_time_needed, 10e-9) 
         else:
-            total_time_needed = (num_cycles + 1.5) * period
+            total_time_needed = (num_cycles + 3.0) * period
             
-        t_div = total_time_needed / 10.0
-        self.inst.write(f'HOR:SCA {t_div}')
+        # Forzar escala de tiempo a secuencia 1-2.5-5
+        min_total_time = total_time_needed / 0.7
+        min_t_div = min_total_time / 10.0 
+        
+        if min_t_div <= 0: min_t_div = 1e-9
+        exponent = math.floor(math.log10(min_t_div))
+        mantissa = min_t_div / (10**exponent)
+        
+        if mantissa <= 1.0:
+            t_div = 1.0 * (10**exponent)
+        elif mantissa <= 2.5:
+            t_div = 2.5 * (10**exponent)
+        elif mantissa <= 5.0:
+            t_div = 5.0 * (10**exponent)
+        else:
+            t_div = 10.0 * (10**exponent)
+            
+        # GUARDAR T_DIV PARA CALCULAR LOS TIEMPOS DE ESPERA DEL TRIGGER
+        self.t_div = t_div 
+            
+        self.inst.write(f'HOR:SCA {t_div:.4e}')
         self.inst.write('HOR:DEL:MOD OFF') 
         self.inst.write('HOR:POS 20')  
         
@@ -125,21 +152,44 @@ class TektronixScope:
             self.inst.write('TRIG:A:EDGE:COUP DC') 
             self.inst.write(f'TRIG:A:LEV {amp * 0.2}') 
         
-        safe_scale = amp / 4.0 
+        # --- SOLUCIÓN ALIASING INICIAL: Forzar secuencia 1-2-5 para el voltaje ---
+        v_div = amp / 6.0 
+        if v_div < 0.002:
+            safe_scale = 0.002
+        else:
+            exp_y = math.floor(math.log10(v_div))
+            man_y = v_div / (10**exp_y)
+            if man_y <= 1.0: safe_scale = 1.0 * (10**exp_y)
+            elif man_y <= 2.0: safe_scale = 2.0 * (10**exp_y)
+            elif man_y <= 5.0: safe_scale = 5.0 * (10**exp_y)
+            else: safe_scale = 10.0 * (10**exp_y)
+            
+        safe_scale = max(safe_scale, 0.002)
+
         for ch in [1, 2, 3, 4]:
-            self.inst.write(f'CH{ch}:SCA {safe_scale}')
+            self.inst.write(f'CH{ch}:SCA {safe_scale:.4f}')
             self.inst.write(f'CH{ch}:POS 0')
 
     def prepare_acquisition(self):
         self.inst.write('ACQ:STOPA SEQ') 
         self.inst.write('ACQ:STATE ON')
-        time.sleep(0.2)
+        
+        # --- SOLUCIÓN DE TRIGGER: Esperar a que se llene el buffer de Pre-Trigger ---
+        # El osciloscopio no se armará hasta que capture el 20% de la pantalla inicial.
+        t_div = getattr(self, 't_div', 0.001)
+        fill_time = (t_div * 10.0) * 0.2
+        time.sleep(fill_time + 0.15) # +150ms de margen de seguridad para que se arme
         
     def wait_for_trigger(self, max_wait=5.0):
+        # --- SOLUCIÓN DE TIMEOUT: Dinámico según la escala de tiempo ---
+        t_div = getattr(self, 't_div', 0.001)
+        # El barrido completo toma t_div * 10 segundos. Damos margen de 2x la pantalla + 5s.
+        dinamic_wait = max(max_wait, (t_div * 10.0 * 2.0) + 5.0)
+        
         timeout_start = time.time()
         while int(self.inst.query('BUSY?')) == 1:
             time.sleep(0.05)
-            if time.time() - timeout_start > max_wait: 
+            if time.time() - timeout_start > dinamic_wait: 
                 self.inst.write('ACQ:STATE OFF') 
                 return False
         return True
@@ -182,9 +232,29 @@ class TektronixScope:
                 if len(raw_data) > 0:
                     volts = (raw_data - y_off) * y_mult + y_zero
                     vpp = np.max(volts) - np.min(volts)
+                    
                     if vpp > 0: 
-                        optimal_scale = max(vpp / 4.0, 0.01) 
-                        self.inst.write(f'CH{ch}:SCA {optimal_scale}')
+                        # --- SOLUCIÓN ALIASING: Forzar secuencia 1-2-5 para el voltaje ---
+                        # Los osciloscopios rechazan comandos de escala con números arbitrarios.
+                        v_div = vpp / 6.0 # Dividir por 6 da un poco de margen (en pantalla de 10 divs)
+                        
+                        if v_div < 0.002:
+                            optimal_scale = 0.002
+                        else:
+                            exp_y = math.floor(math.log10(v_div))
+                            man_y = v_div / (10**exp_y)
+                            
+                            if man_y <= 1.0:
+                                optimal_scale = 1.0 * (10**exp_y)
+                            elif man_y <= 2.0:
+                                optimal_scale = 2.0 * (10**exp_y)
+                            elif man_y <= 5.0:
+                                optimal_scale = 5.0 * (10**exp_y)
+                            else:
+                                optimal_scale = 10.0 * (10**exp_y)
+                                
+                        optimal_scale = max(optimal_scale, 0.002) 
+                        self.inst.write(f'CH{ch}:SCA {optimal_scale:.4f}')
             except:
                 pass 
         time.sleep(0.2)
@@ -436,7 +506,6 @@ class Keithley224:
         except:
             pass
 
-
 class Agilent34420A:
     def __init__(self, direccion="GPIB0::07::INSTR"):
         self.direccion = direccion
@@ -469,7 +538,7 @@ class Agilent34420A:
             self.inst.write(f"VOLT:DC:NPLC {nplc}")
             self.ultimo_nplc = nplc
 
-        # 2. Actualizar Rango (Específico por canal)
+        # 2. Actualizar Rango independientemente por canal
         if rango_str != self.ultimo_rango:
             diccionario_rangos = {
                 "Auto": "AUTO ON", "1 mV": "0.001", "10 mV": "0.01",
@@ -477,20 +546,28 @@ class Agilent34420A:
             }
             rango_val = diccionario_rangos.get(rango_str, "AUTO ON")
 
-            for c in [1, 2]:
-                self.inst.write(f"ROUT:TERM FRON{c}")
-                if rango_val == "AUTO ON":
-                    self.inst.write("VOLT:DC:RANG:AUTO ON")
-                else:
-                    # Protección de Hardware: CH2 no soporta el rango de 100V
-                    if c == 2 and float(rango_val) > 10.0:
-                        self.inst.write("VOLT:DC:RANG 10.0")
-                    else:
-                        self.inst.write(f"VOLT:DC:RANG {rango_val}")
+            # Configurar Canal 1 (soporta hasta 100V)
+            self.inst.write("ROUT:TERM FRON1")
+            if rango_val == "AUTO ON":
+                self.inst.write("SENS1:VOLT:DC:RANG:AUTO ON")
+            else:
+                self.inst.write(f"SENS1:VOLT:DC:RANG {rango_val}")
+
+            # Configurar Canal 2 (clamped a 10V si se seleccionó 100V)
+            self.inst.write("ROUT:TERM FRON2")
+            if rango_val == "AUTO ON":
+                self.inst.write("SENS2:VOLT:DC:RANG:AUTO ON")
+            else:
+                try:
+                    val_float = float(rango_val)
+                    ch2_val = "10.0" if val_float > 10.0 else rango_val
+                except ValueError:
+                    ch2_val = rango_val
+                self.inst.write(f"SENS2:VOLT:DC:RANG 10")
                         
             self.ultimo_rango = rango_str
             
-            # 3. Restaurar el canal activo para no desorientar al script principal
+            # 3. Restaurar canal activo original
             canal_actual = self.ultimo_canal if self.ultimo_canal else 1
             self.inst.write(f"ROUT:TERM FRON{canal_actual}")
 
@@ -1448,7 +1525,12 @@ class HiloPulsos(QThread):
         edge_time = self.estado.get('edge_time', 50e-9)
         pulse_zoom = self.estado.get('pulse_zoom_factor', 10.0)
         use_sync = self.estado.get('use_sync_cable', False)
-        base_file = self.estado.get('ruta_archivo_pulsos', '') # <-- Nuevo
+        high_res = self.estado.get('high_res', True) # <-- NUEVO
+        base_dir = self.estado.get('ruta_archivo_pulsos', '') 
+
+        # --- NUEVO: Aplicar el modo de adquisición al Osciloscopio ---
+        if self.scope.inst:
+            self.scope.inst.write('ACQ:MOD HIR' if high_res else 'ACQ:MOD SAMP')
 
         self.afg.configure_burst(wave_shape, num_cycles)
 
@@ -1500,8 +1582,15 @@ class HiloPulsos(QThread):
                 v1, v2, v3, v4 = v1[:min_len], v2[:min_len], v3[:min_len], v4[:min_len]
                 
                 time_axis = np.arange(len(v1)) * dt
-                current = (v1 - v2) / r_limit
-                v_dut = v4 - v3  
+                
+                # --- CORRECCIÓN DE FUGAS DEL OSCILOSCOPIO ---
+                r_scope = 1e6  # 1 MΩ de impedancia de entrada típica
+                i_total = (v1 - v2) / r_limit
+                i_leak2 = v2 / r_scope
+                i_leak3 = v3 / r_scope
+                current = i_total - i_leak2 - i_leak3
+                
+                v_dut = v3 - v4  
                 
                 window_len = min(101, len(time_axis))
                 if window_len % 2 == 0: window_len -= 1 
@@ -1510,11 +1599,9 @@ class HiloPulsos(QThread):
                 
                 self.datos_pulso.emit(freq, amp, time_axis, v1, v2, v3, v4, v_dut_filt, current_filt)
                 
-                # Save Data appending to base string
-                if base_file:
-                    # Strip the .csv if it's there, then append the sweep parameters
-                    base_name = base_file[:-4] if base_file.lower().endswith('.csv') else base_file
-                    filename = f"{base_name}_{freq}Hz_{amp}V.csv"
+                # --- NUEVA LÓGICA: GUARDAR ARCHIVOS INDIVIDUALES EN LA CARPETA ---
+                if base_dir:
+                    filename = os.path.join(base_dir, f"{freq}Hz_{amp}V.csv")
                     
                     metadata = (
                         f"# --- BURST CONFIG LOG ---\n"
@@ -1533,6 +1620,7 @@ class HiloPulsos(QThread):
                     with open(filename, 'w') as f:
                         f.write(metadata)
                     df.to_csv(filename, mode='a', index=False)
+                # -----------------------------------------------------------------
                     
         self.estado_msg.emit("Barrido de Transientes Finalizado")
         

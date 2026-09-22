@@ -28,6 +28,7 @@ class ConfiguracionGeneralDialog(QDialog):
         self.config = config_actual
         main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
+
         
         # --- TAB 1: Seguridad (Governor) ---
         tab_seguridad = QWidget()
@@ -112,6 +113,62 @@ class ConfiguracionGeneralDialog(QDialog):
         layout_th2832.addRow("Trigger Delay Default (s):", self.th_delay)
         
         self.tabs.addTab(tab_th2832, "Tonghui TH2832")
+
+        # --- TAB 5: Valores Pulsos Transientes ---
+        tab_pulsos = QWidget()
+        layout_pulsos = QFormLayout(tab_pulsos)
+        pulsos_conf = self.config.get("pulsos", {})
+        
+        self.p_freqs = QLineEdit(pulsos_conf.get("freqs", "1000"))
+        layout_pulsos.addRow("Frecuencias (Hz):", self.p_freqs)
+        
+        self.p_amps = QLineEdit(pulsos_conf.get("amps", "0.15"))
+        layout_pulsos.addRow("Amplitudes (V):", self.p_amps)
+        
+        self.p_r_limit = QDoubleSpinBox()
+        self.p_r_limit.setRange(1.0, 10000000.0)
+        self.p_r_limit.setValue(pulsos_conf.get("r_limit", 10000000.0))
+        layout_pulsos.addRow("Resistor Límite (Ω):", self.p_r_limit)
+        
+        self.p_v_max = QDoubleSpinBox()
+        self.p_v_max.setRange(0.01, 10.0)
+        self.p_v_max.setValue(pulsos_conf.get("v_max", 0.4))
+        layout_pulsos.addRow("Max Voltaje Seguro (V):", self.p_v_max)
+        
+        self.p_forma = QComboBox()
+        self.p_forma.addItems(["SQU", "PULS", "RAMP", "SIN"]) # <-- AÑADIDO: SIN
+        self.p_forma.setCurrentText(pulsos_conf.get("forma", "SQU"))
+        layout_pulsos.addRow("Forma de Onda:", self.p_forma)
+        
+        self.p_ciclos = QSpinBox()
+        self.p_ciclos.setRange(1, 1000)
+        self.p_ciclos.setValue(pulsos_conf.get("ciclos", 1))
+        layout_pulsos.addRow("Ciclos (Burst):", self.p_ciclos)
+        
+        self.p_ancho = QDoubleSpinBox()
+        self.p_ancho.setDecimals(9)
+        self.p_ancho.setRange(8e-9, 1999.9)
+        self.p_ancho.setValue(pulsos_conf.get("ancho", 2000e-9))
+        layout_pulsos.addRow("Ancho (s):", self.p_ancho)
+        
+        self.p_flanco = QDoubleSpinBox()
+        self.p_flanco.setDecimals(9)
+        self.p_flanco.setRange(5e-9, 1e-3)
+        self.p_flanco.setValue(pulsos_conf.get("flanco", 50e-9))
+        layout_pulsos.addRow("Flanco (s):", self.p_flanco)
+        
+        self.p_sync = QCheckBox("Cable SYNC Externo")
+        self.p_sync.setChecked(pulsos_conf.get("sync", False))
+        layout_pulsos.addRow("Sincronización:", self.p_sync)
+
+        # --- NUEVO: Toggle Config Menu ---
+        self.p_high_res = QCheckBox("Alta Resolución (Osciloscopio)") 
+        self.p_high_res.setChecked(pulsos_conf.get("high_res", True))
+        layout_pulsos.addRow("High Res:", self.p_high_res)
+        
+        self.tabs.addTab(tab_pulsos, "Pulsos (Osc+AFG)")
+        
+        main_layout.addWidget(self.tabs)
         
         main_layout.addWidget(self.tabs)
         
@@ -141,6 +198,28 @@ class ConfiguracionGeneralDialog(QDialog):
             "rsou": self.th_rsou.currentText(),
             "rango": self.th_rango.currentText(),
             "trig_delay": self.th_delay.value()
+        }
+        nueva_config["th2832"] = {
+            "vac": self.th_vac.value(),
+            "alc_on": self.th_alc.isChecked(),
+            "speed": self.th_speed.currentText(),
+            "avg": self.th_avg.value(),
+            "rsou": self.th_rsou.currentText(),
+            "rango": self.th_rango.currentText(),
+            "trig_delay": self.th_delay.value()
+        }
+        # <-- AÑADIR LA EXTRACCIÓN DE PULSOS AQUÍ -->
+        nueva_config["pulsos"] = {
+            "freqs": self.p_freqs.text(),
+            "amps": self.p_amps.text(),
+            "r_limit": self.p_r_limit.value(),
+            "v_max": self.p_v_max.value(),
+            "forma": self.p_forma.currentText(),
+            "ciclos": self.p_ciclos.value(),
+            "ancho": self.p_ancho.value(),
+            "flanco": self.p_flanco.value(),
+            "sync": self.p_sync.isChecked(),
+            "high_res": self.p_high_res.isChecked() # <-- NUEVO
         }
         return nueva_config
 
@@ -206,13 +285,17 @@ class IVMeasurementApp(QMainWindow):
         self.archivo_config = "config.json"
         
         # Diccionario base por si el JSON no existe
-        # Diccionario base por si el JSON no existe
         self.config_app = {
             "directorio_defecto": "",
             "max_current_ma": 105.0,
             "k224": {"ancho_pulso": 0.1, "limite_voltaje": 20.0},
             "a34420a": {"nplc": "2", "rango": "10 V"},
-            "th2832": {"vac": 0.1, "alc_on": True, "speed": "MED", "avg": 1, "rsou": "100", "rango": "AUTO", "trig_delay": 0.0} 
+            "th2832": {"vac": 0.1, "alc_on": True, "speed": "MED", "avg": 1, "rsou": "100", "rango": "AUTO", "trig_delay": 0.0},
+            "pulsos": {
+                "freqs": "1000", "amps": "0.15", "r_limit": 1000.0, "v_max": 0.4, 
+                "forma": "SQU", "ciclos": 1, "ancho": 2000e-9, "flanco": 50e-9, "sync": False,
+                "high_res": True # <-- NUEVO
+            } 
         }
         self._cargar_configuracion()
         
@@ -284,11 +367,13 @@ class IVMeasurementApp(QMainWindow):
     def _aplicar_defaults_a_ui(self):
         p_k224 = self.dual_inst_tab.params_pane
         i_34420 = self.dual_inst_tab.instant_pane
-        p_th = self.espectroscopia_tab.params_pane # <-- Referencia a TH2832
+        p_th = self.espectroscopia_tab.params_pane 
+        p_pulsos = self.pulsos_tab.params_pane # <-- NUEVO
         
         k224_conf = self.config_app.get("k224", {})
         a34420_conf = self.config_app.get("a34420a", {})
-        th_conf = self.config_app.get("th2832", {}) # <-- Recuperar
+        th_conf = self.config_app.get("th2832", {}) 
+        pulsos_conf = self.config_app.get("pulsos", {}) # <-- NUEVO
         
         p_k224.ancho_pulso.setValue(k224_conf.get("ancho_pulso", 0.1))
         p_k224.limite_voltaje.setValue(k224_conf.get("limite_voltaje", 20.0))
@@ -296,7 +381,6 @@ class IVMeasurementApp(QMainWindow):
         i_34420.combo_nplc.setCurrentText(a34420_conf.get("nplc", "2"))
         i_34420.combo_rango.setCurrentText(a34420_conf.get("rango", "10 V"))
 
-        # <-- APLICAR TH2832 -->
         p_th.vac.setValue(th_conf.get("vac", 0.1))
         p_th.chk_alc.setChecked(th_conf.get("alc_on", True))
         p_th.combo_speed.setCurrentText(th_conf.get("speed", "MED"))
@@ -304,6 +388,18 @@ class IVMeasurementApp(QMainWindow):
         p_th.combo_rsou.setCurrentText(str(th_conf.get("rsou", "100")))
         p_th.combo_rango.setCurrentText(th_conf.get("rango", "AUTO"))
         p_th.trig_delay.setValue(th_conf.get("trig_delay", 0.0))
+        
+        # <-- APLICAR VALORES DE PULSOS A LA UI -->
+        p_pulsos.freqs.setText(pulsos_conf.get("freqs", "1000"))
+        p_pulsos.amps.setText(pulsos_conf.get("amps", "0.15"))
+        p_pulsos.r_limit.setValue(pulsos_conf.get("r_limit", 1100000.0))
+        p_pulsos.v_max.setValue(pulsos_conf.get("v_max", 0.4))
+        p_pulsos.forma.setCurrentText(pulsos_conf.get("forma", "PULS"))
+        p_pulsos.ciclos.setValue(pulsos_conf.get("ciclos", 1))
+        p_pulsos.ancho.setValue(pulsos_conf.get("ancho", 2000e-9))
+        p_pulsos.flanco.setValue(pulsos_conf.get("flanco", 50e-9))
+        p_pulsos.chk_sync.setChecked(pulsos_conf.get("sync", False))
+        p_pulsos.chk_high_res.setChecked(pulsos_conf.get("high_res", True)) # <-- NUEVO
 
     def _aplicar_gobernador(self, max_ma):
         """Bloquea los rangos máximos de las cajas de corriente."""
@@ -664,7 +760,7 @@ class IVMeasurementApp(QMainWindow):
         p_pane.ancho.valueChanged.connect(self._validar_limites_pulso)
         p_pane.flanco.valueChanged.connect(self._validar_limites_pulso)
         p_pane.forma.currentTextChanged.connect(self._validar_limites_pulso)
-        p_pane.freqs.textChanged.connect(self._validar_limites_pulso) # <-- NUEVO
+        p_pane.freqs.textChanged.connect(self._validar_limites_pulso) # <-- NUEVO|
 
     def _validar_limites_pulso(self, *args):
         """Advierte si la geometría del pulso obligará al hardware a truncar los valores."""
@@ -708,16 +804,16 @@ class IVMeasurementApp(QMainWindow):
             self._mostrar_error("Frecuencias o amplitudes inválidas. Use números separados por comas.")
             return
 
-        ruta_inicial = self.directorio_defecto
-        if ruta_inicial:
-            import time
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            # AÑADIR .csv AQUÍ fuerza al OS a pre-seleccionar el filtro correctamente
-            ruta_inicial = os.path.join(ruta_inicial, f"transientes_{timestamp}.csv") 
-            
-        ruta_archivo, _ = QFileDialog.getSaveFileName(self, "Guardar Transientes", ruta_inicial, "CSV Files (*.csv);;Todos los archivos (*)")
-        if not ruta_archivo: return
-        if not ruta_archivo.lower().endswith('.csv'): ruta_archivo += '.csv'
+        # --- NUEVA LÓGICA: CREAR CARPETA DE LOTE AUTOMÁTICA ---
+        ruta_inicial = self.directorio_defecto if self.directorio_defecto else ""
+        directorio_destino = QFileDialog.getExistingDirectory(self, "Seleccionar Directorio Raíz para el Lote", ruta_inicial)
+        
+        if not directorio_destino: return
+
+        import time
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        directorio_lote = os.path.join(directorio_destino, f"lote_pulsos_{timestamp}")
+        os.makedirs(directorio_lote, exist_ok=True)
 
         self.estado_compartido.update({
             'frecuencias_pulsos': freqs,
@@ -729,7 +825,8 @@ class IVMeasurementApp(QMainWindow):
             'pulse_width': p_pane.ancho.value(),
             'edge_time': p_pane.flanco.value(),
             'use_sync_cable': p_pane.chk_sync.isChecked(),
-            'ruta_archivo_pulsos': ruta_archivo
+            'high_res': p_pane.chk_high_res.isChecked(), # <-- NUEVO
+            'ruta_archivo_pulsos': directorio_lote 
         })
         
         # --- REEMPLAZAR ESTE BLOQUE ---
@@ -769,9 +866,14 @@ class IVMeasurementApp(QMainWindow):
         self.pt_over_ch4.setData(time_ms, v4_mv)
         
         # 4. I-V Curve
-        v_dut_raw = (v4 - v3) * 1e3
+        v_dut_raw = (v3 - v4) * 1e3
         r_limit = self.pulsos_tab.params_pane.r_limit.value()
-        current_raw = ((v1 - v2) / r_limit) * 1e6
+        r_scope = 1e6
+        
+        i_total = (v1 - v2) / r_limit
+        i_leak2 = v2 / r_scope
+        i_leak3 = v3 / r_scope
+        current_raw = (i_total - i_leak2 - i_leak3) * 1e6
         
         self.pt_iv_curve_raw.setData(v_dut_raw, current_raw)
         self.pt_iv_curve_filt.setData(v_dut_filt * 1e3, current_filt * 1e6)
@@ -1525,9 +1627,18 @@ class IVMeasurementApp(QMainWindow):
                 self.pt_iv_curve_filt.setData(np.array(self.data_pt_vdut) * 1e3, np.array(self.data_pt_idut) * 1e6)
                 
                 # Calcular el RAW en vivo usando el Resistor Límite actual de la UI
-                v_dut_raw = (np.array(self.data_pt_v4) - np.array(self.data_pt_v3)) * 1e3
+                v3_raw = np.array(self.data_pt_v3)
+                v4_raw = np.array(self.data_pt_v4)
+                v_dut_raw = (v3_raw - v4_raw) * 1e3
+                
                 r_limit = self.pulsos_tab.params_pane.r_limit.value()
-                i_dut_raw = ((v1_arr - v2_arr) / r_limit) * 1e6
+                r_scope = 1e6
+                
+                i_total = (v1_arr - v2_arr) / r_limit
+                i_leak2 = v2_arr / r_scope
+                i_leak3 = v3_raw / r_scope
+                i_dut_raw = (i_total - i_leak2 - i_leak3) * 1e6
+                
                 self.pt_iv_curve_raw.setData(v_dut_raw, i_dut_raw)
                 
                 # Cambiar automáticamente a la pestaña de Transientes

@@ -661,8 +661,8 @@ class ControlPulsosTransientesPane(QGroupBox):
 
         layout.addWidget(QLabel("Resistor Límite (Ω)"), 0, 2)
         self.r_limit = QDoubleSpinBox()
-        self.r_limit.setRange(1.0, 1000000.0)
-        self.r_limit.setValue(1000.0)
+        self.r_limit.setRange(1.0, 10000000.0)
+        self.r_limit.setValue(10000000.0)
         layout.addWidget(self.r_limit, 1, 2)
 
         layout.addWidget(QLabel("Max Voltaje Seguro (V)"), 0, 3)
@@ -673,7 +673,7 @@ class ControlPulsosTransientesPane(QGroupBox):
 
         layout.addWidget(QLabel("Forma de Onda"), 2, 0)
         self.forma = QComboBox()
-        self.forma.addItems(["SQU", "PULS", "RAMP"])
+        self.forma.addItems(["SQU", "PULS", "RAMP", "SIN"]) # <-- AÑADIDO: SIN
         layout.addWidget(self.forma, 3, 0)
 
         layout.addWidget(QLabel("Ciclos (Burst)"), 2, 1)
@@ -685,20 +685,25 @@ class ControlPulsosTransientesPane(QGroupBox):
         layout.addWidget(QLabel("Ancho (s) [Modo PULS]"), 2, 2)
         self.ancho = QDoubleSpinBox()
         self.ancho.setDecimals(9)
-        self.ancho.setRange(8e-9, 1999.9) # Mínimo absoluto de 8.0 ns según manual
+        self.ancho.setRange(8e-9, 1999.9) 
         self.ancho.setValue(2000e-9)
         layout.addWidget(self.ancho, 3, 2)
 
         layout.addWidget(QLabel("Flanco (s) [Modo PULS]"), 2, 3)
         self.flanco = QDoubleSpinBox()
         self.flanco.setDecimals(9)
-        self.flanco.setRange(5e-9, 1e-3) # Rango de 5.00 ns a 1.00 ms según manual
+        self.flanco.setRange(5e-9, 1e-3) 
         self.flanco.setValue(50e-9)
         layout.addWidget(self.flanco, 3, 3)
         
         self.chk_sync = QCheckBox("Cable SYNC Externo Conectado")
         self.chk_sync.setChecked(False)
         layout.addWidget(self.chk_sync, 4, 0, 1, 2)
+
+        # --- NUEVO: Toggle de Alta Resolución ---
+        self.chk_high_res = QCheckBox("Alta Resolución (High Res Osc)")
+        self.chk_high_res.setChecked(True)
+        layout.addWidget(self.chk_high_res, 4, 2, 1, 2)
 
         # --- NUEVA ETIQUETA DE ADVERTENCIA PARA PULSOS ---
         self.lbl_warning_pulsos = QLabel(" ")
