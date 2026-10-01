@@ -855,11 +855,15 @@ class HiloMedicionDual(QThread):
             if not self.pausado_cbias:
                 inicio_ciclo_a = time.time()
                 
-                if abs(corriente_objetivo) < 1e-5:
-                    corriente_objetivo = 1e-5 if corriente_objetivo >= 0 else -1e-5
+                # --- NUEVA LÓGICA: Inyectar la rampa sobre el Offset ---
+                offset_ramp = float(self.estado.get('offset_ramp', 0.0))
+                i_pulso = corriente_objetivo + offset_ramp
+                
+                if abs(i_pulso) < 1e-5:
+                    i_pulso = 1e-5 if i_pulso >= 0 else -1e-5
 
                 self.fuente.set_limite_voltaje(self.estado['limite_voltaje'])
-                self.fuente.set_corriente(corriente_objetivo)
+                self.fuente.set_corriente(i_pulso)
                 
                 self.voltimetro.seleccionar_canal(1)
                 self.fuente.operar()
@@ -881,14 +885,14 @@ class HiloMedicionDual(QThread):
                 # APAGADO INMEDIATO
                 self.fuente.standby()
                 
-                r1_inst = float('nan') if abs(corriente_objetivo) < 1e-5 else (v1_inst / (corriente_objetivo * 1e-3))
-                r2_inst = float('nan') if (abs(corriente_objetivo) < 1e-5 or not usa_ch2) else (v2_inst / (corriente_objetivo * 1e-3))
+                r1_inst = float('nan') if abs(i_pulso) < 1e-5 else (v1_inst / (i_pulso * 1e-3))
+                r2_inst = float('nan') if (abs(i_pulso) < 1e-5 or not usa_ch2) else (v2_inst / (i_pulso * 1e-3))
                 
                 t_min = (time.time() - tiempo_inicio) / 60.0
-                self.datos_actualizados.emit(t_min, v1_inst, r1_inst, v2_inst, r2_inst, corriente_objetivo, False)
+                self.datos_actualizados.emit(t_min, v1_inst, r1_inst, v2_inst, r2_inst, i_pulso, False)
                 
                 self.pulse_data = {
-                'i_inst': corriente_objetivo, 'v1_inst': v1_inst, 'r1_inst': r1_inst,
+                'i_inst': i_pulso, 'v1_inst': v1_inst, 'r1_inst': r1_inst,
                 'v2_inst': v2_inst, 'r2_inst': r2_inst
                 }
                 
@@ -911,15 +915,18 @@ class HiloMedicionDual(QThread):
                     
                     inicio_ciclo_b = time.time()
                     
-                    corr_bias_actual = self.estado['corr_bias']
-                    if abs(corr_bias_actual) < 1e-5:
-                        corr_bias_actual = 1e-5 if corr_bias_actual >= 0 else -1e-5
+                    # --- NUEVA LÓGICA: Inyectar el Bias sobre el Offset ---
+                    offset_ramp = float(self.estado.get('offset_ramp', 0.0))
+                    i_bias = self.estado['corr_bias'] + offset_ramp
+                    
+                    if abs(i_bias) < 1e-5:
+                        i_bias = 1e-5 if i_bias >= 0 else -1e-5
 
-                    self.fuente.set_corriente(corr_bias_actual)
+                    self.fuente.set_corriente(i_bias)
                     self.voltimetro.seleccionar_canal(1)
                     self.fuente.operar()
                     
-                    # 1. Espera Dinámica del Pulso ON (usamos ancho_pulso también aquí)
+                    # 1. Espera Dinámica del Pulso ON
                     t_espera_on = self.estado['ancho_pulso'] - margen_lectura
                     if t_espera_on > 0:
                         while (time.time() - inicio_ciclo_b) < t_espera_on and self.corriendo:
@@ -936,14 +943,14 @@ class HiloMedicionDual(QThread):
                     # APAGADO INMEDIATO
                     self.fuente.standby()
                     
-                    r1_bias = float('nan') if abs(corr_bias_actual) < 1e-5 else (v1_bias / (corr_bias_actual * 1e-3))
-                    r2_bias = float('nan') if (abs(corr_bias_actual) < 1e-5 or not usa_ch2) else (v2_bias / (corr_bias_actual * 1e-3))
+                    r1_bias = float('nan') if abs(i_bias) < 1e-5 else (v1_bias / (i_bias * 1e-3))
+                    r2_bias = float('nan') if (abs(i_bias) < 1e-5 or not usa_ch2) else (v2_bias / (i_bias * 1e-3))
                     
                     t_min = (time.time() - tiempo_inicio) / 60.0
-                    self.datos_actualizados.emit(t_min, v1_bias, r1_bias, v2_bias, r2_bias, corr_bias_actual, True)
+                    self.datos_actualizados.emit(t_min, v1_bias, r1_bias, v2_bias, r2_bias, i_bias, True)
                     
                     fila = [
-                        f"{t_min:.4f}", self.pulse_data['i_inst'], corr_bias_actual,
+                        f"{t_min:.4f}", self.pulse_data['i_inst'], i_bias,
                         self.pulse_data['v1_inst'], self.pulse_data['r1_inst'], r1_bias, v1_bias,
                         self.pulse_data['v2_inst'], self.pulse_data['r2_inst'], r2_bias, v2_bias,
                         self.estado['ancho_pulso'], self.estado['periodo_pulso'], 

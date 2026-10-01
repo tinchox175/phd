@@ -406,7 +406,8 @@ class IVMeasurementApp(QMainWindow):
         p_k224 = self.dual_inst_tab.params_pane
         cajas_corriente = [
             p_k224.corr_maxima, p_k224.corr_minima, 
-            p_k224.corr_inicial, p_k224.corr_bias, p_k224.paso_corr
+            p_k224.corr_inicial, p_k224.corr_bias, p_k224.paso_corr,
+            p_k224.offset_ramp # <-- NUEVO
         ]
         
         for caja in cajas_corriente:
@@ -1274,23 +1275,6 @@ class IVMeasurementApp(QMainWindow):
                 return
                 
             nuevo_estado = {
-                'modo_relajacion': True,
-                'lista_pulsos': lista_pulsos,
-                'lista_bias': lista_bias,
-                'tiempo_pulso': p_pane.tiempo_pulso.value(),
-                'tiempo_descarga': p_pane.tiempo_descarga.value(),
-                'relajacion_pulsada': p_pane.btn_pulsado.isChecked(),
-                'periodo_relajacion': p_pane.periodo.value(),
-                'ancho_lectura': p_pane.ancho_lectura.value(),
-                'limite_voltaje': p_pane.limite_voltaje.value(),
-                'nplc': i_pane.combo_nplc.currentText(),
-                'rango': i_pane.combo_rango.currentText(),
-                'ch2_activado': i_pane.btn_ch2_toggle.isChecked()
-            }
-        else:
-            p_pane = self.dual_inst_tab.params_pane
-            i_pane = self.dual_inst_tab.instant_pane
-            nuevo_estado = {
                 'modo_relajacion': False,
                 'ancho_pulso': p_pane.ancho_pulso.value(),
                 'corr_maxima': p_pane.corr_maxima.value(),
@@ -1300,11 +1284,31 @@ class IVMeasurementApp(QMainWindow):
                 'periodo_pulso': p_pane.periodo_pulso.value(),
                 'corr_minima': p_pane.corr_minima.value(),
                 'paso_corr': p_pane.paso_corr.value(),
+                'offset_ramp': p_pane.offset_ramp.value(), # <-- NUEVO
                 'limite_voltaje': p_pane.limite_voltaje.value(),
                 'nplc': i_pane.combo_nplc.currentText(),
                 'rango': i_pane.combo_rango.currentText(),
                 'ch2_activado': i_pane.btn_ch2_toggle.isChecked()
             }
+        else:
+            p_pane = self.dual_inst_tab.params_pane
+            i_pane = self.dual_inst_tab.instant_pane
+            nuevo_estado = {
+                            'modo_relajacion': False,
+                            'ancho_pulso': p_pane.ancho_pulso.value(),
+                            'corr_maxima': p_pane.corr_maxima.value(),
+                            'corr_inicial': p_pane.corr_inicial.value(),
+                            'num_mediciones_bias': p_pane.num_mediciones.value(),
+                            'corr_bias': p_pane.corr_bias.value(),
+                            'periodo_pulso': p_pane.periodo_pulso.value(),
+                            'corr_minima': p_pane.corr_minima.value(),
+                            'paso_corr': p_pane.paso_corr.value(),
+                            'offset_ramp': p_pane.offset_ramp.value(), # <-- NUEVO
+                            'limite_voltaje': p_pane.limite_voltaje.value(),
+                            'nplc': i_pane.combo_nplc.currentText(),
+                            'rango': i_pane.combo_rango.currentText(),
+                            'ch2_activado': i_pane.btn_ch2_toggle.isChecked()
+                        }
             
         self.estado_compartido.update(nuevo_estado)
         self.status_bar.setStyleSheet("") 

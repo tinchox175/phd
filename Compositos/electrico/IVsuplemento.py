@@ -293,8 +293,19 @@ class ParametrosK224Pane(QGroupBox):
         layout.addWidget(QLabel("Límite Voltaje (V)"), 2, 3)
         self.limite_voltaje = QDoubleSpinBox()
         self.limite_voltaje.setRange(0.0, 200.0)
-        self.limite_voltaje.setValue(20.0) # Default: 20 V
+        self.limite_voltaje.setValue(20.0) 
         layout.addWidget(self.limite_voltaje, 3, 3)
+
+        # --- NUEVO: Offset para montar la rampa sobre una constante ---
+        layout.addWidget(QLabel("Offset Rampa (mA)"), 2, 4)
+        self.offset_ramp = QDoubleSpinBox()
+        self.offset_ramp.setDecimals(DECIMALES_CORRIENTE)
+        self.offset_ramp.setKeyboardTracking(False)
+        self.offset_ramp.setRange(*RANGO_CORRIENTE)
+        self.offset_ramp.setSingleStep(PASO_UI)
+        self.offset_ramp.setValue(0.000)
+        layout.addWidget(self.offset_ramp, 3, 4)
+        # --------------------------------------------------------------
 
         # Label de advertencia de tiempos
         self.lbl_warning_tiempo = QLabel(" ")
@@ -667,7 +678,7 @@ class ControlPulsosTransientesPane(QGroupBox):
 
         layout.addWidget(QLabel("Max Voltaje Seguro (V)"), 0, 3)
         self.v_max = QDoubleSpinBox()
-        self.v_max.setRange(0.01, 10.0)
+        self.v_max.setRange(0.01, 30.0)
         self.v_max.setValue(0.4)
         layout.addWidget(self.v_max, 1, 3)
 
