@@ -642,20 +642,33 @@ class HiloMedicionDual(QThread):
 
         return v1, v2
 
+    def _conmutar_matriz_seguro(self, ch_abrir, ch_cerrar, delay_asentamiento=0.25):
+        """
+        Realiza conmutación Break-Before-Make protegiendo la muestra:
+        1. Pone la K224 en Standby (F0X) para evitar picos de compliance en circuito abierto.
+        2. Abre el canal previo y cierra el nuevo esperando confirmación física (*OPC?).
+        3. Espera el tiempo de asentamiento mecánico/térmico del relé.
+        """
+        self.fuente.standby()
+        time.sleep(0.03)
+        self.matriz.open_channels(ch_abrir)
+        self.matriz.close_channels(ch_cerrar)
+        try:
+            self.matriz.instrument.query("*OPC?")
+        except Exception:
+            pass
+        time.sleep(delay_asentamiento)
+
     def _ejecutar_lectura_compleja(self, i_target_ma, ancho_pulso, nplc, usa_ch2_fron,
                                    no_output_off, usar_delta, usa_matriz, ch1_mat, ch2_mat):
         """
-        Ejecuta una medición de punto completo:
-        - Soporta 0.0 mA reales (devuelve R = NaN sin forzar 1e-5 mA).
-        - Si no_output_off está activo, clava la fuente en 0.0 mA (sin hacer F0X) al terminar el pulso.
-        - usar_delta solo se activa cuando es llamado desde la fase de Bias.
+        Ejecuta una medición de punto completo protegiendo la conmutación de matriz.
         """
         delay_cambio_canal = 0.05
-        delay_matriz = 0.15
+        delay_matriz = 0.25  # 250 ms de asentamiento post-relé para el nanovoltímetro
         margen_lectura = 0.1 + (delay_cambio_canal if (usa_ch2_fron and not usa_matriz) else 0.0)
-        t_espera_on = max(0.0, ancho_pulso - margen_lectura)
+        t_espera_on = max(0.05, ancho_pulso - margen_lectura)
 
-        # Permitir 0.0 mA reales en la fuente; proteger únicamente la división matemática R = V/I
         i_pos = float(i_target_ma)
         i_neg = -i_pos
         corriente_nula = abs(i_pos) < 1e-9
@@ -667,17 +680,11 @@ class HiloMedicionDual(QThread):
             return v_val / (factor * i_ma * 1e-3)
 
         if usa_matriz:
+            self._estaba_en_matriz = True
             # ----------------------------------------------------
-            # MODO MATRIZ HP34970A
+            # 1. CANAL 1 DE LA MATRIZ
             # ----------------------------------------------------
-            # 1. Conmutar a Canal 1 de la Matriz
-            if no_output_off:
-                self.fuente.set_corriente(0.0)
-            else:
-                self.fuente.standby()
-            self.matriz.open_channels(ch2_mat)
-            self.matriz.close_channels(ch1_mat)
-            time.sleep(delay_matriz)
+            self._conmutar_matriz_seguro(ch2_mat, ch1_mat, delay_matriz)
 
             v1_pos, _ = self._medir_polaridad_simple(i_pos, t_espera_on, False, delay_cambio_canal)
             if usar_delta and self.corriendo:
@@ -691,14 +698,10 @@ class HiloMedicionDual(QThread):
                 v1 = v1_pos
                 r1 = calc_r(v1_pos, i_pos, es_delta=False)
 
-            # 2. Conmutar a Canal 2 de la Matriz
-            if no_output_off:
-                self.fuente.set_corriente(0.0)
-            else:
-                self.fuente.standby()
-            self.matriz.open_channels(ch1_mat)
-            self.matriz.close_channels(ch2_mat)
-            time.sleep(delay_matriz)
+            # ----------------------------------------------------
+            # 2. CANAL 2 DE LA MATRIZ
+            # ----------------------------------------------------
+            self._conmutar_matriz_seguro(ch1_mat, ch2_mat, delay_matriz)
 
             v2_pos, _ = self._medir_polaridad_simple(i_pos, t_espera_on, False, delay_cambio_canal)
             if usar_delta and self.corriendo:
@@ -712,7 +715,15 @@ class HiloMedicionDual(QThread):
                 v2 = v2_pos
                 r2 = calc_r(v2_pos, i_pos, es_delta=False)
 
+            # 3. Dejar estacionada la matriz en Canal 1 para el próximo ciclo (o si se apaga la matriz)
+            self._conmutar_matriz_seguro(ch2_mat, ch1_mat, 0.10)
+
         else:
+            # Si el usuario acaba de apagar el toggle de Matriz en vivo, asegurar que quede en Ch1
+            if getattr(self, '_estaba_en_matriz', False) and self.matriz.instrument:
+                self._conmutar_matriz_seguro(ch2_mat, ch1_mat, 0.15)
+                self._estaba_en_matriz = False
+
             # ----------------------------------------------------
             # MODO ESTÁNDAR (FRON1 / FRON2 en el 34420A)
             # ----------------------------------------------------
@@ -741,7 +752,7 @@ class HiloMedicionDual(QThread):
                 else:
                     v2, r2 = float('nan'), float('nan')
 
-        # --- FIN DEL PULSO: Clavar a 0.0 mA si No Output Off está activo, o apagar salida (F0X) ---
+        # --- FIN DEL PULSO ---
         if no_output_off:
             self.fuente.set_corriente(0.0)
             self.fuente.operar()
