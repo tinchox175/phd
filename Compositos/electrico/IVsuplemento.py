@@ -1,15 +1,24 @@
 import sys
-from PySide6.QtWidgets import (QApplication, QMainWindow, QHBoxLayout, QVBoxLayout, QWidget, QGridLayout, QLabel, 
-                               QDoubleSpinBox, QSpinBox, QLineEdit, QGroupBox, QPushButton, QSizePolicy, QComboBox, QSpacerItem)
+import numpy as np
+from PySide6.QtWidgets import (
+    QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel,
+    QDoubleSpinBox, QSpinBox, QLineEdit, QGroupBox, QPushButton,
+    QSizePolicy, QComboBox, QTableWidget, QTableWidgetItem,
+    QHeaderView, QCheckBox
+)
 from PySide6.QtCore import Qt
-import pyqtgraph as pg
 
+
+# ==============================================================================
+# PANEL DE LECTURAS: AGILENT 34420A
+# ==============================================================================
 class Lecturas34420APane(QGroupBox):
     def __init__(self):
         super().__init__("Lecturas 34420A")
-        
+
         main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(5, 10, 5, 5)
+        main_layout.setContentsMargins(6, 8, 6, 6)
+        main_layout.setSpacing(8)
         self.setLayout(main_layout)
 
         # ==========================================
@@ -17,26 +26,28 @@ class Lecturas34420APane(QGroupBox):
         # ==========================================
         self.ch1_panel = QGroupBox("Canal 1")
         ch1_layout = QVBoxLayout()
+        ch1_layout.setContentsMargins(6, 8, 6, 6)
+        ch1_layout.setSpacing(4)
         self.ch1_panel.setLayout(ch1_layout)
 
         # --- CH1 Controles Superiores ---
         ch1_top_layout = QHBoxLayout()
-        
-        # NPLC
+
         nplc_layout = QVBoxLayout()
+        nplc_layout.setSpacing(2)
         nplc_layout.addWidget(QLabel("NPLC"))
         self.combo_nplc = QComboBox()
-        self.combo_nplc.addItems(["0.02", "0.2", "1", "2", "10", "20", "100", "200"]) 
-        self.combo_nplc.setCurrentText("2") 
+        self.combo_nplc.addItems(["0.02", "0.2", "1", "2", "10", "20", "100", "200"])
+        self.combo_nplc.setCurrentText("2")
         nplc_layout.addWidget(self.combo_nplc)
         ch1_top_layout.addLayout(nplc_layout)
 
-        # Rango
         rango_layout = QVBoxLayout()
+        rango_layout.setSpacing(2)
         rango_layout.addWidget(QLabel("Rango"))
         self.combo_rango = QComboBox()
         self.combo_rango.addItems(["Auto", "1 mV", "10 mV", "100 mV", "1 V", "10 V", "100 V"])
-        self.combo_rango.setCurrentText("10 V") 
+        self.combo_rango.setCurrentText("10 V")
         rango_layout.addWidget(self.combo_rango)
         ch1_top_layout.addLayout(rango_layout)
 
@@ -44,8 +55,8 @@ class Lecturas34420APane(QGroupBox):
 
         # --- CH1 Grilla de Lecturas ---
         grid1 = QGridLayout()
-        grid1.setVerticalSpacing(5)
-        grid1.setHorizontalSpacing(8)
+        grid1.setVerticalSpacing(3)
+        grid1.setHorizontalSpacing(6)
 
         grid1.addWidget(QLabel("Ip 1 (mA)"), 0, 0)
         self.ip_1_ro = self._create_ro_display()
@@ -71,31 +82,31 @@ class Lecturas34420APane(QGroupBox):
         self.rrem_1_ro = self._create_ro_display()
         grid1.addWidget(self.rrem_1_ro, 3, 2)
 
-        grid1.setRowStretch(4, 1)
         ch1_layout.addLayout(grid1)
-
 
         # ==========================================
         # SUBPANEL 2: Canal 2
         # ==========================================
-        self.ch2_panel = QGroupBox("Canal 2")
+        self.ch2_panel = QGroupBox("Canal 2 (FRON2 / Matriz)")
         ch2_layout = QVBoxLayout()
+        ch2_layout.setContentsMargins(6, 8, 6, 6)
+        ch2_layout.setSpacing(4)
         self.ch2_panel.setLayout(ch2_layout)
 
         # --- CH2 Controles Superiores ---
         ch2_top_layout = QHBoxLayout()
-        self.btn_ch2_toggle = QPushButton("CH 2: APAGADO")
+        self.btn_ch2_toggle = QPushButton("CH 2 (34420A): APAGADO")
         self.btn_ch2_toggle.setCheckable(True)
-        self.btn_ch2_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        self.btn_ch2_toggle.setMinimumHeight(48) 
+        self.btn_ch2_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.btn_ch2_toggle.setMinimumHeight(36)
         self.btn_ch2_toggle.toggled.connect(self._on_ch2_toggle)
         ch2_top_layout.addWidget(self.btn_ch2_toggle)
         ch2_layout.addLayout(ch2_top_layout)
 
         # --- CH2 Grilla de Lecturas ---
         grid2 = QGridLayout()
-        grid2.setVerticalSpacing(5)
-        grid2.setHorizontalSpacing(8)
+        grid2.setVerticalSpacing(3)
+        grid2.setHorizontalSpacing(6)
 
         grid2.addWidget(QLabel("Ip 2 (mA)"), 0, 0)
         self.ip_2_ro = self._create_ro_display()
@@ -121,10 +132,8 @@ class Lecturas34420APane(QGroupBox):
         self.rrem_2_ro = self._create_ro_display()
         grid2.addWidget(self.rrem_2_ro, 3, 2)
 
-        grid2.setRowStretch(4, 1)
         ch2_layout.addLayout(grid2)
 
-        # Añadir subpaneles al layout principal
         main_layout.addWidget(self.ch1_panel)
         main_layout.addWidget(self.ch2_panel)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
@@ -132,102 +141,66 @@ class Lecturas34420APane(QGroupBox):
         self._on_ch2_toggle(False)
 
     def _create_ro_display(self):
-        le = QLineEdit("0.00000") 
+        le = QLineEdit("0.00000")
         le.setReadOnly(True)
         le.setStyleSheet("background-color: #f0f0f0; color: #333; font-weight: bold;")
         le.setAlignment(Qt.AlignmentFlag.AlignRight)
         return le
 
-    def _on_ch2_toggle(self, checked):
-        if checked:
-            self.btn_ch2_toggle.setText("CH 2: ENCENDIDO")
-            self.btn_ch2_toggle.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
-        else:
-            self.btn_ch2_toggle.setText("CH 2: APAGADO")
-            self.btn_ch2_toggle.setStyleSheet("background-color: #ffcccc; color: black; font-weight: bold;")
-            
+    def set_ch2_readouts_enabled(self, enabled):
+        """Habilita o deshabilita las cajas de lectura del Canal 2 (usado por FRON2 o Matriz)."""
         widgets_to_toggle = [
             self.ip_2_ro, self.vp_2_ro, self.rinst_2_ro,
             self.ib_2_ro, self.vb_2_ro, self.rrem_2_ro
         ]
         for widget in widgets_to_toggle:
-            widget.setEnabled(checked)
-
-    # ==========================================
-    # MÉTODOS AUXILIARES
-    # ==========================================
-    def _create_ro_display(self):
-        le = QLineEdit("0.00000") # Aumentado a 5 decimales por default visual
-        le.setReadOnly(True)
-        le.setStyleSheet("background-color: #f0f0f0; color: #333; font-weight: bold;")
-        le.setAlignment(Qt.AlignmentFlag.AlignRight)
-        return le
-
-    def _validar_filtros(self):
-        filtro = self.combo_filtro.currentText()
-        rango = self.combo_rango.currentText()
-        
-        mensaje = ""
-        # 1. Check del Filtro Digital
-        if filtro in ["Digital", "Ambos"]:
-            mensaje += "⚠ Digital: Distorsiona barridos (usar solo en bias constante).\n"
-            
-        # 2. Check del Filtro Analógico (Solo en <= 100mV)
-        if filtro in ["Analógico", "Ambos"]:
-            rangos_invalidos = ["1 V", "10 V", "100 V"]
-            if rango in rangos_invalidos:
-                mensaje += rf"⚠ Analógico: Rango {rango} incompatible (solo $\le$ 100mV).\n"
-                
-        self.lbl_advertencia.setText(mensaje)
+            widget.setEnabled(enabled)
 
     def _on_ch2_toggle(self, checked):
         if checked:
-            self.btn_ch2_toggle.setText("CH 2: ENCENDIDO")
+            self.btn_ch2_toggle.setText("CH 2 (34420A): ENCENDIDO")
             self.btn_ch2_toggle.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
         else:
-            self.btn_ch2_toggle.setText("CH 2: APAGADO")
+            self.btn_ch2_toggle.setText("CH 2 (34420A): APAGADO")
             self.btn_ch2_toggle.setStyleSheet("background-color: #ffcccc; color: black; font-weight: bold;")
-            
-        widgets_to_toggle = [
-            self.ip_2_ro, self.vp_2_ro, self.rinst_2_ro,
-            self.ib_2_ro, self.vb_2_ro, self.rrem_2_ro
-        ]
-        for widget in widgets_to_toggle:
-            widget.setEnabled(checked)
+
+        self.set_ch2_readouts_enabled(checked)
 
 
+# ==============================================================================
+# PANEL DE PARÁMETROS: KEITHLEY 224 (CON MODOS TOGGLE: NO-OFF, DELTA, MATRIZ)
+# ==============================================================================
 class ParametrosK224Pane(QGroupBox):
     def __init__(self):
         super().__init__("Parámetros K224")
-        
+
         layout = QGridLayout()
-        layout.setVerticalSpacing(5) 
+        layout.setVerticalSpacing(4)
         layout.setHorizontalSpacing(8)
-        layout.setContentsMargins(5, 15, 5, 5)
-        
-        # LÍMITES GLOBALES DE CORRIENTE Y PRECISIÓN
+        layout.setContentsMargins(6, 10, 6, 6)
+
         RANGO_CORRIENTE = (-105.0, 105.0)
         DECIMALES_CORRIENTE = 5
-        PASO_UI = 0.001 # Las flechas arriba/abajo sumarán 1 µA en lugar de 1 mA
+        PASO_UI = 0.001
 
         # ==========================================
-        # FILA 1 (Textos Fila 0, Inputs Fila 1)
+        # FILA 1: Parámetros de Rampa y Bias (Filas 0 y 1)
         # ==========================================
         layout.addWidget(QLabel("Ancho Pulso (s)"), 0, 0)
         self.ancho_pulso = QDoubleSpinBox()
         self.ancho_pulso.setDecimals(3)
         self.ancho_pulso.setKeyboardTracking(False)
         self.ancho_pulso.setRange(0.001, 100.0)
-        self.ancho_pulso.setValue(0.1) # Default: 100 ms
+        self.ancho_pulso.setValue(0.1)
         layout.addWidget(self.ancho_pulso, 1, 0)
 
-        layout.addWidget(QLabel("Corriente Máxima (mA)"), 0, 1)
+        layout.addWidget(QLabel("Corriente Máx (mA)"), 0, 1)
         self.corr_maxima = QDoubleSpinBox()
         self.corr_maxima.setDecimals(DECIMALES_CORRIENTE)
         self.corr_maxima.setKeyboardTracking(False)
         self.corr_maxima.setRange(*RANGO_CORRIENTE)
         self.corr_maxima.setSingleStep(PASO_UI)
-        self.corr_maxima.setValue(0.010) # Default: +10 µA (0.010 mA)
+        self.corr_maxima.setValue(0.010)
         layout.addWidget(self.corr_maxima, 1, 1)
 
         layout.addWidget(QLabel("Corriente Inicial (mA)"), 0, 2)
@@ -236,7 +209,7 @@ class ParametrosK224Pane(QGroupBox):
         self.corr_inicial.setKeyboardTracking(False)
         self.corr_inicial.setRange(*RANGO_CORRIENTE)
         self.corr_inicial.setSingleStep(PASO_UI)
-        self.corr_inicial.setValue(0.000) # Default: 0 mA
+        self.corr_inicial.setValue(0.000)
         layout.addWidget(self.corr_inicial, 1, 2)
 
         layout.addWidget(QLabel("Corriente Actual (mA)"), 0, 3)
@@ -250,7 +223,7 @@ class ParametrosK224Pane(QGroupBox):
         self.num_mediciones = QSpinBox()
         self.num_mediciones.setRange(0, 10000)
         self.num_mediciones.setKeyboardTracking(False)
-        self.num_mediciones.setValue(1) 
+        self.num_mediciones.setValue(1)
         layout.addWidget(self.num_mediciones, 1, 4)
 
         layout.addWidget(QLabel("Corriente Bias (mA)"), 0, 5)
@@ -259,26 +232,27 @@ class ParametrosK224Pane(QGroupBox):
         self.corr_bias.setKeyboardTracking(False)
         self.corr_bias.setRange(*RANGO_CORRIENTE)
         self.corr_bias.setSingleStep(PASO_UI)
-        self.corr_bias.setValue(0.00010) # Default: +0.1 µA (0.0001 mA)
+        self.corr_bias.setValue(0.00010)
         layout.addWidget(self.corr_bias, 1, 5)
 
         # ==========================================
-        # FILA 2 (Textos Fila 2, Inputs Fila 3)
+        # FILA 2: Período, Límites y Offset (Filas 2 y 3)
         # ==========================================
         layout.addWidget(QLabel("Período Pulso (s)"), 2, 0)
         self.periodo_pulso = QDoubleSpinBox()
         self.periodo_pulso.setDecimals(3)
+        self.periodo_pulso.setKeyboardTracking(False)
         self.periodo_pulso.setRange(0.01, 1000.0)
-        self.periodo_pulso.setValue(1.0) # Default: 1 segundo
+        self.periodo_pulso.setValue(1.0)
         layout.addWidget(self.periodo_pulso, 3, 0)
 
-        layout.addWidget(QLabel("Corriente Mínima (mA)"), 2, 1)
+        layout.addWidget(QLabel("Corriente Mín (mA)"), 2, 1)
         self.corr_minima = QDoubleSpinBox()
         self.corr_minima.setDecimals(DECIMALES_CORRIENTE)
         self.corr_minima.setKeyboardTracking(False)
         self.corr_minima.setRange(*RANGO_CORRIENTE)
         self.corr_minima.setSingleStep(PASO_UI)
-        self.corr_minima.setValue(-0.010) # Default: -10 µA (-0.010 mA)
+        self.corr_minima.setValue(-0.010)
         layout.addWidget(self.corr_minima, 3, 1)
 
         layout.addWidget(QLabel("Paso Corriente (mA)"), 2, 2)
@@ -287,16 +261,15 @@ class ParametrosK224Pane(QGroupBox):
         self.paso_corr.setKeyboardTracking(False)
         self.paso_corr.setRange(*RANGO_CORRIENTE)
         self.paso_corr.setSingleStep(PASO_UI)
-        self.paso_corr.setValue(0.001) # Default: +1 µA (0.001 mA)
+        self.paso_corr.setValue(0.001)
         layout.addWidget(self.paso_corr, 3, 2)
 
         layout.addWidget(QLabel("Límite Voltaje (V)"), 2, 3)
         self.limite_voltaje = QDoubleSpinBox()
         self.limite_voltaje.setRange(0.0, 200.0)
-        self.limite_voltaje.setValue(20.0) 
+        self.limite_voltaje.setValue(20.0)
         layout.addWidget(self.limite_voltaje, 3, 3)
 
-        # --- NUEVO: Offset para montar la rampa sobre una constante ---
         layout.addWidget(QLabel("Offset Rampa (mA)"), 2, 4)
         self.offset_ramp = QDoubleSpinBox()
         self.offset_ramp.setDecimals(DECIMALES_CORRIENTE)
@@ -305,57 +278,133 @@ class ParametrosK224Pane(QGroupBox):
         self.offset_ramp.setSingleStep(PASO_UI)
         self.offset_ramp.setValue(0.000)
         layout.addWidget(self.offset_ramp, 3, 4)
-        # --------------------------------------------------------------
+
+        # Canales de Matriz en Fila 2 Columna 5
+        matriz_ch_layout = QHBoxLayout()
+        matriz_ch_layout.setSpacing(4)
+        self.matriz_ch1 = QSpinBox()
+        self.matriz_ch1.setRange(100, 999)
+        self.matriz_ch1.setValue(212)
+        self.matriz_ch1.setPrefix("M1:")
+        self.matriz_ch1.setEnabled(False)
+
+        self.matriz_ch2 = QSpinBox()
+        self.matriz_ch2.setRange(100, 999)
+        self.matriz_ch2.setValue(222)
+        self.matriz_ch2.setPrefix("M2:")
+        self.matriz_ch2.setEnabled(False)
+
+        matriz_ch_layout.addWidget(self.matriz_ch1)
+        matriz_ch_layout.addWidget(self.matriz_ch2)
+        layout.addWidget(QLabel("Canales Matriz (Ch1/Ch2)"), 2, 5)
+        layout.addLayout(matriz_ch_layout, 3, 5)
+
+        # ==========================================
+        # FILA 3: Modos en Toggle (No Output Off, Delta, Matriz)
+        # ==========================================
+        toggles_layout = QHBoxLayout()
+        toggles_layout.setSpacing(6)
+
+        self.btn_no_off = QPushButton("No Output Off: APAGADO")
+        self.btn_no_off.setCheckable(True)
+        self.btn_no_off.setMinimumHeight(28)
+        self.btn_no_off.toggled.connect(self._on_no_off_toggle)
+
+        self.btn_delta = QPushButton("Modo Delta (±I): APAGADO")
+        self.btn_delta.setCheckable(True)
+        self.btn_delta.setMinimumHeight(28)
+        self.btn_delta.toggled.connect(self._on_delta_toggle)
+
+        self.btn_matriz = QPushButton("Matriz Multicanal: APAGADO")
+        self.btn_matriz.setCheckable(True)
+        self.btn_matriz.setMinimumHeight(28)
+        self.btn_matriz.toggled.connect(self._on_matriz_toggle)
+
+        toggles_layout.addWidget(self.btn_no_off)
+        toggles_layout.addWidget(self.btn_delta)
+        toggles_layout.addWidget(self.btn_matriz)
+        layout.addLayout(toggles_layout, 4, 0, 1, 6)
 
         # Label de advertencia de tiempos
         self.lbl_warning_tiempo = QLabel(" ")
         self.lbl_warning_tiempo.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 11px;")
-        layout.addWidget(self.lbl_warning_tiempo, 4, 0, 1, 6)
-        
-        layout.setRowMinimumHeight(4, 20)
-        
+        layout.addWidget(self.lbl_warning_tiempo, 5, 0, 1, 6)
+
         # ==========================================
-        # FILA 3: BOTONES (Fila 5 en la grilla)
+        # FILA 4: Botones de Control
         # ==========================================
         btn_layout = QHBoxLayout()
-        
+        btn_layout.setSpacing(6)
+
         self.btn_medir = QPushButton("Medir")
-        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;") 
-        
-        self.btn_pausa_cbias = QPushButton("Pausa c/Bias")
-        self.btn_pausa_sbias = QPushButton("Pausa s/Bias")
-        
-        self.btn_detencion = QPushButton("Detención")
-        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;") 
-        
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
+
         self.btn_aplicar = QPushButton("Aplicar Cambios")
         self.btn_aplicar.setStyleSheet("background-color: #fff3e0; color: black; font-weight: bold;")
 
+        self.btn_pausa_cbias = QPushButton("Pausa c/Bias")
+        self.btn_pausa_sbias = QPushButton("Pausa s/Bias")
+
+        self.btn_detencion = QPushButton("Detención")
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;")
+
         for btn in [self.btn_medir, self.btn_aplicar, self.btn_pausa_cbias, self.btn_pausa_sbias, self.btn_detencion]:
-            btn.setMinimumHeight(35)
+            btn.setMinimumHeight(32)
             btn_layout.addWidget(btn)
 
-        layout.addLayout(btn_layout, 5, 0, 1, 6)
-        layout.setRowStretch(6, 1)
-        
+        layout.addLayout(btn_layout, 6, 0, 1, 6)
+
         self.setLayout(layout)
-        # Cambiar Maximum por Expanding en AMBOS paneles
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
+        # Inicializar estilos de los toggles
+        self._on_no_off_toggle(False)
+        self._on_delta_toggle(False)
+        self._on_matriz_toggle(False)
+
+    def _on_no_off_toggle(self, checked):
+        if checked:
+            self.btn_no_off.setText("No Output Off: ACTIVO")
+            self.btn_no_off.setStyleSheet("background-color: #1565c0; color: white; font-weight: bold;")
+        else:
+            self.btn_no_off.setText("No Output Off: APAGADO")
+            self.btn_no_off.setStyleSheet("background-color: #e0e0e0; color: #333; font-weight: bold;")
+
+    def _on_delta_toggle(self, checked):
+        if checked:
+            self.btn_delta.setText("Modo Delta (±I): ACTIVO")
+            self.btn_delta.setStyleSheet("background-color: #6a1b9a; color: white; font-weight: bold;")
+        else:
+            self.btn_delta.setText("Modo Delta (±I): APAGADO")
+            self.btn_delta.setStyleSheet("background-color: #e0e0e0; color: #333; font-weight: bold;")
+
+    def _on_matriz_toggle(self, checked):
+        self.matriz_ch1.setEnabled(checked)
+        self.matriz_ch2.setEnabled(checked)
+        if checked:
+            self.btn_matriz.setText("Matriz Multicanal: ACTIVA")
+            self.btn_matriz.setStyleSheet("background-color: #ef6c00; color: white; font-weight: bold;")
+        else:
+            self.btn_matriz.setText("Matriz Multicanal: APAGADO")
+            self.btn_matriz.setStyleSheet("background-color: #e0e0e0; color: #333; font-weight: bold;")
 
 
+# ==============================================================================
+# PANEL DE PARÁMETROS: RELAJACIÓN K224
+# ==============================================================================
 class ParametrosRelajacionPane(QGroupBox):
     def __init__(self):
         super().__init__("Matriz de Relajación K224")
-        
+
         layout = QGridLayout()
-        layout.setVerticalSpacing(5) 
+        layout.setVerticalSpacing(4)
         layout.setHorizontalSpacing(8)
-        layout.setContentsMargins(5, 15, 5, 5)
+        layout.setContentsMargins(6, 10, 6, 6)
 
         # ==========================================
         # FILA 1: Matrices de Corriente y Tiempos
         # ==========================================
-        layout.addWidget(QLabel("Corrientes Pulso (mA)\n[Ej: 0.01, 0.02, -0.01]"), 0, 0)
+        layout.addWidget(QLabel("Corrientes Pulso (mA) [Ej: 0.01, -0.01]"), 0, 0)
         self.corr_pulso = QLineEdit("0.010, 0.020, 0.030, -0.010, -0.020, -0.030")
         self.corr_pulso.setStyleSheet("background-color: #ffffff; color: #000000;")
         layout.addWidget(self.corr_pulso, 1, 0)
@@ -367,7 +416,7 @@ class ParametrosRelajacionPane(QGroupBox):
         self.tiempo_pulso.setValue(5.0)
         layout.addWidget(self.tiempo_pulso, 1, 1)
 
-        layout.addWidget(QLabel("Corrientes Bias (mA)\n[Ej: 0.001, -0.001]"), 0, 2)
+        layout.addWidget(QLabel("Corrientes Bias (mA) [Ej: 0.001, -0.001]"), 0, 2)
         self.corr_bias = QLineEdit("0.001, -0.001, 0.002, -0.002")
         self.corr_bias.setStyleSheet("background-color: #ffffff; color: #000000;")
         layout.addWidget(self.corr_bias, 1, 2)
@@ -383,6 +432,7 @@ class ParametrosRelajacionPane(QGroupBox):
         # ==========================================
         self.btn_pulsado = QPushButton("Modo: CONTINUO")
         self.btn_pulsado.setCheckable(True)
+        self.btn_pulsado.setMinimumHeight(32)
         self.btn_pulsado.setStyleSheet("background-color: #81d4fa; color: black; font-weight: bold;")
         self.btn_pulsado.toggled.connect(self._on_pulsado_toggle)
         layout.addWidget(self.btn_pulsado, 2, 0, 2, 1)
@@ -402,15 +452,13 @@ class ParametrosRelajacionPane(QGroupBox):
         self.ancho_lectura.setValue(0.5)
         self.ancho_lectura.setEnabled(False)
         layout.addWidget(self.ancho_lectura, 3, 2)
-        
-        # [Mantener el código anterior intacto hasta "Límite Voltaje"]
+
         layout.addWidget(QLabel("Límite Voltaje (V)"), 2, 3)
         self.limite_voltaje = QDoubleSpinBox()
         self.limite_voltaje.setRange(0.0, 200.0)
         self.limite_voltaje.setValue(20.0)
         layout.addWidget(self.limite_voltaje, 3, 3)
 
-        # NUEVO: Label de advertencia de tiempos (reemplaza el setRowMinimumHeight)
         self.lbl_warning_tiempo = QLabel(" ")
         self.lbl_warning_tiempo.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 11px;")
         layout.addWidget(self.lbl_warning_tiempo, 4, 0, 1, 4)
@@ -420,21 +468,19 @@ class ParametrosRelajacionPane(QGroupBox):
         # ==========================================
         btn_layout = QHBoxLayout()
         self.btn_medir = QPushButton("Iniciar Matriz")
-        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;") 
-        self.btn_detencion = QPushButton("Detención Global")
-        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;") 
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold;")
         self.btn_aplicar = QPushButton("Aplicar Cambios")
         self.btn_aplicar.setStyleSheet("background-color: #fff3e0; color: black; font-weight: bold;")
+        self.btn_detencion = QPushButton("Detención Global")
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold;")
 
         for btn in [self.btn_medir, self.btn_aplicar, self.btn_detencion]:
-            btn.setMinimumHeight(35)
+            btn.setMinimumHeight(32)
             btn_layout.addWidget(btn)
 
         layout.addLayout(btn_layout, 5, 0, 1, 4)
-        layout.setRowStretch(6, 1)
         self.setLayout(layout)
-        # Cambiar Maximum por Expanding en AMBOS paneles
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
     def _on_pulsado_toggle(self, checked):
         if checked:
@@ -448,32 +494,31 @@ class ParametrosRelajacionPane(QGroupBox):
             self.periodo.setEnabled(False)
             self.ancho_lectura.setEnabled(False)
 
-# ==============================================================================
-# LAS CLASES DEL SMU (B2902A) SE MANTIENEN INTACTAS DEBAJO DE ESTA LÍNEA
-# ==============================================================================
 
+# ==============================================================================
+# PANELES DEL SMU (KEYSIGHT B2902A) LIMPIOS Y EN ESPAÑOL
+# ==============================================================================
 class InstantPane(QGroupBox):
     def __init__(self):
-        super().__init__("Instantaneous Readings")
-        
+        super().__init__("Lecturas Instantáneas (B2902A)")
+
         main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(5, 10, 5, 5)
+        main_layout.setContentsMargins(6, 8, 6, 6)
         self.setLayout(main_layout)
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        
+
         # ==========================================
-        # SUBPANEL 1: Channel 1
+        # SUBPANEL 1: Canal 1
         # ==========================================
-        self.ch1_panel = QGroupBox("Channel 1")
+        self.ch1_panel = QGroupBox("Canal 1")
         grid1 = QGridLayout()
-        grid1.setVerticalSpacing(2)
-        grid1.setHorizontalSpacing(8)
+        grid1.setVerticalSpacing(3)
+        grid1.setHorizontalSpacing(6)
         self.ch1_panel.setLayout(grid1)
 
-        self.btn_mode_toggle = QPushButton("Mode: V (mV)")
+        self.btn_mode_toggle = QPushButton("Modo: V (mV)")
         self.btn_mode_toggle.setCheckable(True)
-        self.btn_mode_toggle.toggled.connect(self._on_mode_toggle) 
-        grid1.addWidget(self.btn_mode_toggle, 1, 0) 
+        self.btn_mode_toggle.toggled.connect(self._on_mode_toggle)
+        grid1.addWidget(self.btn_mode_toggle, 1, 0)
 
         grid1.addWidget(QLabel("Icc 1 (mA)"), 0, 1)
         self.icc_1 = QDoubleSpinBox()
@@ -509,20 +554,18 @@ class InstantPane(QGroupBox):
         self.rrem_1_ro = self._create_ro_display()
         grid1.addWidget(self.rrem_1_ro, 5, 2)
 
-        grid1.setRowStretch(6, 1)
-
         # ==========================================
-        # SUBPANEL 2: Channel 2
+        # SUBPANEL 2: Canal 2
         # ==========================================
-        self.ch2_panel = QGroupBox("Channel 2")
+        self.ch2_panel = QGroupBox("Canal 2")
         grid2 = QGridLayout()
-        grid2.setVerticalSpacing(2)
-        grid2.setHorizontalSpacing(8)
+        grid2.setVerticalSpacing(3)
+        grid2.setHorizontalSpacing(6)
         self.ch2_panel.setLayout(grid2)
 
-        self.btn_ch2_toggle = QPushButton("CH 2: OFF")
+        self.btn_ch2_toggle = QPushButton("CH 2: APAGADO")
         self.btn_ch2_toggle.setCheckable(True)
-        self.btn_ch2_toggle.setStyleSheet("background-color: #ffcccc;") 
+        self.btn_ch2_toggle.setStyleSheet("background-color: #ffcccc; font-weight: bold;")
         self.btn_ch2_toggle.toggled.connect(self._on_ch2_toggle)
         grid2.addWidget(self.btn_ch2_toggle, 1, 0)
 
@@ -560,13 +603,8 @@ class InstantPane(QGroupBox):
         self.rrem_2_ro = self._create_ro_display()
         grid2.addWidget(self.rrem_2_ro, 5, 2)
 
-        grid2.setRowStretch(6, 1)
-
-        grid1.setColumnStretch(3, 1)
-        grid2.setColumnStretch(3, 1)
         main_layout.addWidget(self.ch1_panel)
         main_layout.addWidget(self.ch2_panel)
-
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
     def _create_ro_display(self):
@@ -578,30 +616,30 @@ class InstantPane(QGroupBox):
 
     def _on_mode_toggle(self, checked):
         if checked:
-            self.btn_mode_toggle.setText("Mode: I (mA)")
+            self.btn_mode_toggle.setText("Modo: I (mA)")
         else:
-            self.btn_mode_toggle.setText("Mode: V (mV)")
+            self.btn_mode_toggle.setText("Modo: V (mV)")
 
     def _on_ch2_toggle(self, checked):
         if checked:
-            self.btn_ch2_toggle.setText("CH 2: ON")
-            self.btn_ch2_toggle.setStyleSheet("background-color: #ccffcc;")
+            self.btn_ch2_toggle.setText("CH 2: ENCENDIDO")
+            self.btn_ch2_toggle.setStyleSheet("background-color: #ccffcc; font-weight: bold;")
         else:
-            self.btn_ch2_toggle.setText("CH 2: OFF")
-            self.btn_ch2_toggle.setStyleSheet("background-color: #ffcccc;")
+            self.btn_ch2_toggle.setText("CH 2: APAGADO")
+            self.btn_ch2_toggle.setStyleSheet("background-color: #ffcccc; font-weight: bold;")
 
 
 class ParametersPane(QGroupBox):
     def __init__(self):
-        super().__init__("Measurement Parameters")
-        
+        super().__init__("Parámetros de Medición (B2902A)")
+
         layout = QGridLayout()
         self.setLayout(layout)
-        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
-        layout.setVerticalSpacing(2)  
-        layout.setHorizontalSpacing(5) 
-        layout.setContentsMargins(10, 15, 10, 10)
-        
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        layout.setVerticalSpacing(4)
+        layout.setHorizontalSpacing(8)
+        layout.setContentsMargins(6, 10, 6, 6)
+
         layout.addWidget(QLabel("Ancho pulso (s)"), 0, 0)
         self.ancho_pulso = QDoubleSpinBox()
         self.ancho_pulso.setDecimals(3)
@@ -619,22 +657,22 @@ class ParametersPane(QGroupBox):
         self.amp_max = QDoubleSpinBox()
         layout.addWidget(self.amp_max, 1, 3)
 
-        layout.addWidget(QLabel("Amplitud pulso actual"), 0, 4)
+        layout.addWidget(QLabel("Amplitud actual"), 0, 4)
         self.amp_actual_readout = QLineEdit("0.00")
         self.amp_actual_readout.setReadOnly(True)
         self.amp_actual_readout.setStyleSheet("background-color: #f0f0f0; color: #333;")
         self.amp_actual_readout.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.amp_actual_readout, 1, 4)
 
-        layout.addWidget(QLabel("# mediciones bias"), 0, 5)
+        layout.addWidget(QLabel("# Mediciones bias"), 0, 5)
         self.num_mediciones = QSpinBox()
-        self.num_mediciones.setRange(1, 10000)
+        self.num_mediciones.setRange(0, 10000)
         layout.addWidget(self.num_mediciones, 1, 5)
 
         layout.addWidget(QLabel("Amplitud bias"), 0, 6)
         self.amp_bias = QDoubleSpinBox()
         layout.addWidget(self.amp_bias, 1, 6)
-        
+
         layout.addWidget(QLabel("Período pulso (s)"), 2, 0)
         self.periodo_pulso = QDoubleSpinBox()
         layout.addWidget(self.periodo_pulso, 3, 0)
@@ -647,7 +685,6 @@ class ParametersPane(QGroupBox):
         self.amp_min = QDoubleSpinBox()
         layout.addWidget(self.amp_min, 3, 2)
 
-        layout.setColumnStretch(7, 1)
 
 # ==============================================================================
 # UI: TRANSIENTES (AFG + OSCILOSCOPIO)
@@ -656,16 +693,16 @@ class ControlPulsosTransientesPane(QGroupBox):
     def __init__(self):
         super().__init__("Matriz de Pulsos (AFG + Osciloscopio)")
         layout = QGridLayout()
-        layout.setVerticalSpacing(5) 
+        layout.setVerticalSpacing(4)
         layout.setHorizontalSpacing(8)
-        layout.setContentsMargins(5, 15, 5, 5)
+        layout.setContentsMargins(6, 10, 6, 6)
 
-        layout.addWidget(QLabel("Frecuencias (Hz)\n[Ej: 100, 1000]"), 0, 0)
+        layout.addWidget(QLabel("Frecuencias (Hz) [Ej: 100, 1000]"), 0, 0)
         self.freqs = QLineEdit("1000")
         self.freqs.setStyleSheet("background-color: #ffffff; color: #000000;")
         layout.addWidget(self.freqs, 1, 0)
 
-        layout.addWidget(QLabel("Amplitudes (V)\n[Ej: 0.1, 0.2]"), 0, 1)
+        layout.addWidget(QLabel("Amplitudes (V) [Ej: 0.1, 0.2]"), 0, 1)
         self.amps = QLineEdit("0.15")
         self.amps.setStyleSheet("background-color: #ffffff; color: #000000;")
         layout.addWidget(self.amps, 1, 1)
@@ -684,7 +721,7 @@ class ControlPulsosTransientesPane(QGroupBox):
 
         layout.addWidget(QLabel("Forma de Onda"), 2, 0)
         self.forma = QComboBox()
-        self.forma.addItems(["SQU", "PULS", "RAMP", "SIN"]) # <-- AÑADIDO: SIN
+        self.forma.addItems(["SQU", "PULS", "RAMP", "SIN"])
         layout.addWidget(self.forma, 3, 0)
 
         layout.addWidget(QLabel("Ciclos (Burst)"), 2, 1)
@@ -696,43 +733,41 @@ class ControlPulsosTransientesPane(QGroupBox):
         layout.addWidget(QLabel("Ancho (s) [Modo PULS]"), 2, 2)
         self.ancho = QDoubleSpinBox()
         self.ancho.setDecimals(9)
-        self.ancho.setRange(8e-9, 1999.9) 
+        self.ancho.setRange(8e-9, 1999.9)
         self.ancho.setValue(2000e-9)
         layout.addWidget(self.ancho, 3, 2)
 
         layout.addWidget(QLabel("Flanco (s) [Modo PULS]"), 2, 3)
         self.flanco = QDoubleSpinBox()
         self.flanco.setDecimals(9)
-        self.flanco.setRange(5e-9, 1e-3) 
+        self.flanco.setRange(5e-9, 1e-3)
         self.flanco.setValue(50e-9)
         layout.addWidget(self.flanco, 3, 3)
-        
+
         self.chk_sync = QCheckBox("Cable SYNC Externo Conectado")
         self.chk_sync.setChecked(False)
         layout.addWidget(self.chk_sync, 4, 0, 1, 2)
 
-        # --- NUEVO: Toggle de Alta Resolución ---
         self.chk_high_res = QCheckBox("Alta Resolución (High Res Osc)")
         self.chk_high_res.setChecked(True)
         layout.addWidget(self.chk_high_res, 4, 2, 1, 2)
 
-        # --- NUEVA ETIQUETA DE ADVERTENCIA PARA PULSOS ---
         self.lbl_warning_pulsos = QLabel(" ")
         self.lbl_warning_pulsos.setStyleSheet("color: #d32f2f; font-weight: bold; font-size: 11px;")
         layout.addWidget(self.lbl_warning_pulsos, 5, 0, 1, 4)
 
         btn_layout = QHBoxLayout()
         self.btn_medir = QPushButton("Iniciar Transientes")
-        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 35px;") 
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 32px;")
         self.btn_detencion = QPushButton("Detener")
-        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 35px;") 
-        
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 32px;")
+
         btn_layout.addWidget(self.btn_medir)
         btn_layout.addWidget(self.btn_detencion)
-        layout.addLayout(btn_layout, 6, 0, 1, 4) 
-        layout.setRowStretch(7, 1) 
+        layout.addLayout(btn_layout, 6, 0, 1, 4)
         self.setLayout(layout)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
 
 class PulsosTransientesTab(QWidget):
     def __init__(self):
@@ -741,22 +776,23 @@ class PulsosTransientesTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         self.params_pane = ControlPulsosTransientesPane()
         main_layout.addWidget(self.params_pane, alignment=Qt.AlignmentFlag.AlignTop)
-        main_layout.addStretch()
         self.setLayout(main_layout)
 
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox
 
+# ==============================================================================
+# UI: TEMPERATURA (LAKESHORE + MOTOR + K224 + 34420A)
+# ==============================================================================
 class ControlTemperaturaPane(QGroupBox):
     def __init__(self):
         super().__init__("Control de Temperatura (LakeShore + Motor)")
-        
+
         layout = QGridLayout()
-        layout.setVerticalSpacing(5) 
+        layout.setVerticalSpacing(4)
         layout.setHorizontalSpacing(8)
-        layout.setContentsMargins(5, 15, 5, 5)
+        layout.setContentsMargins(6, 10, 6, 6)
 
         # ==========================================
-        # FILA 1: Configuración de la Rampa (Añadido Paso dT)
+        # FILA 1: Configuración de la Rampa
         # ==========================================
         layout.addWidget(QLabel("T Inicial (K)"), 0, 0)
         self.t_inicial = QDoubleSpinBox()
@@ -781,7 +817,7 @@ class ControlTemperaturaPane(QGroupBox):
         self.rate.setRange(0.01, 50.0)
         self.rate.setValue(2.0)
         layout.addWidget(self.rate, 1, 3)
-        
+
         layout.addWidget(QLabel("¿Estabilizar? (1=Sí)"), 0, 4)
         self.estabilizar = QSpinBox()
         self.estabilizar.setRange(0, 1)
@@ -797,9 +833,10 @@ class ControlTemperaturaPane(QGroupBox):
         self.tabla_pasos = QTableWidget(0, 3)
         self.tabla_pasos.setHorizontalHeaderLabels(["T Setpoint (K)", "Rate (K/min)", "Estable?"])
         self.tabla_pasos.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.tabla_pasos.setMinimumHeight(120)
+        self.tabla_pasos.setMinimumHeight(90)
+        self.tabla_pasos.setMaximumHeight(130)
         layout.addWidget(self.tabla_pasos, 2, 0, 1, 6)
-        
+
         btn_layout_tabla = QHBoxLayout()
         self.btn_eliminar_paso = QPushButton("Borrar Fila Seleccionada")
         self.btn_limpiar_tabla = QPushButton("Limpiar Tabla Completa")
@@ -808,31 +845,38 @@ class ControlTemperaturaPane(QGroupBox):
         layout.addLayout(btn_layout_tabla, 3, 0, 1, 6)
 
         # ==========================================
-        # FILA 3: Límites de Motor y Control Manual 
+        # FILA 3: Límites de Motor, Estabilidad y PID
         # ==========================================
         layout.addWidget(QLabel("Motor Máx (V)"), 4, 0)
         self.motor_max = QDoubleSpinBox()
+        self.motor_max.setRange(0.0, 4.9)
         self.motor_max.setValue(4.8)
         layout.addWidget(self.motor_max, 5, 0)
 
         layout.addWidget(QLabel("Motor Mín (V)"), 4, 1)
         self.motor_min = QDoubleSpinBox()
+        self.motor_min.setRange(0.0, 4.9)
         self.motor_min.setValue(1.2)
         layout.addWidget(self.motor_min, 5, 1)
+
+        layout.addWidget(QLabel("T. Estabilidad (s)"), 4, 2)
+        self.tiempo_estabilidad = QDoubleSpinBox()
+        self.tiempo_estabilidad.setRange(1.0, 3600.0)
+        self.tiempo_estabilidad.setValue(60.0)
+        layout.addWidget(self.tiempo_estabilidad, 5, 2)
 
         manual_layout = QVBoxLayout()
         self.chk_motor_manual = QCheckBox("Override Manual")
         self.chk_motor_manual.setStyleSheet("color: #d32f2f; font-weight: bold;")
         manual_layout.addWidget(self.chk_motor_manual)
-        
+
         self.v_motor_manual = QDoubleSpinBox()
         self.v_motor_manual.setPrefix("V Motor: ")
         self.v_motor_manual.setRange(0.0, 4.9)
         self.v_motor_manual.setValue(2.6)
         manual_layout.addWidget(self.v_motor_manual)
-        
-        layout.addLayout(manual_layout, 4, 2, 2, 2)
-        
+        layout.addLayout(manual_layout, 4, 3, 2, 1)
+
         layout.addWidget(QLabel("P / I / D (Opcional)"), 4, 4, 1, 2)
         self.pid_input = QLineEdit("50, 20, 0")
         layout.addWidget(self.pid_input, 5, 4, 1, 2)
@@ -849,26 +893,27 @@ class ControlTemperaturaPane(QGroupBox):
 
         layout.addWidget(QLabel("Límite Voltaje (V)"), 6, 1)
         self.vlim = QDoubleSpinBox()
+        self.vlim.setRange(0.0, 200.0)
         self.vlim.setValue(20.0)
         layout.addWidget(self.vlim, 7, 1)
-        
+
         layout.addWidget(QLabel("N Mediciones (Delta)"), 6, 2)
         self.n_stat = QSpinBox()
         self.n_stat.setRange(1, 100)
         self.n_stat.setValue(3)
         layout.addWidget(self.n_stat, 7, 2)
 
-        auto_layout = QVBoxLayout()
+        auto_layout = QHBoxLayout()
         self.chk_auto_rango = QCheckBox("Auto-Rango I")
         self.chk_auto_rango.setChecked(False)
         auto_layout.addWidget(self.chk_auto_rango)
-        
+
         self.v_max = QDoubleSpinBox()
         self.v_max.setPrefix("Max V: ")
         self.v_max.setDecimals(3)
         self.v_max.setValue(0.01)
         auto_layout.addWidget(self.v_max)
-        
+
         self.v_min = QDoubleSpinBox()
         self.v_min.setPrefix("Min V: ")
         self.v_min.setDecimals(3)
@@ -881,42 +926,39 @@ class ControlTemperaturaPane(QGroupBox):
         # ==========================================
         btn_layout = QHBoxLayout()
         self.btn_medir = QPushButton("Iniciar Rampa")
-        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 35px;") 
-        
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 32px;")
+
         self.btn_aplicar = QPushButton("Aplicar Cambios")
-        self.btn_aplicar.setStyleSheet("background-color: #fff3e0; color: black; font-weight: bold; height: 35px;")
-        
+        self.btn_aplicar.setStyleSheet("background-color: #fff3e0; color: black; font-weight: bold; height: 32px;")
+
         self.btn_detencion = QPushButton("Detener Rampa")
-        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 35px;") 
-        
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 32px;")
+
         for btn in [self.btn_medir, self.btn_aplicar, self.btn_detencion]:
             btn_layout.addWidget(btn)
 
         layout.addLayout(btn_layout, 8, 0, 1, 6)
-        
+
         self.setLayout(layout)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        
-        # Conexiones internas de la UI 
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+
         self.btn_agregar_paso.clicked.connect(self._agregar_a_tabla)
         self.btn_limpiar_tabla.clicked.connect(lambda: self.tabla_pasos.setRowCount(0))
         self.btn_eliminar_paso.clicked.connect(self._eliminar_fila)
 
     def _agregar_a_tabla(self):
-        import numpy as np
         t_ini = self.t_inicial.value()
         t_fin = self.t_final.value()
         paso = self.t_paso.value()
         rate = self.rate.value()
         estable = self.estabilizar.value()
-        
+
         if t_ini == t_fin:
             puntos_t = [t_fin]
         else:
             direccion = 1 if t_fin > t_ini else -1
-            # np.arange no incluye el último valor si es exacto, agregamos margen del 10% del paso
             puntos_t = list(np.arange(t_ini, t_fin + (direccion * paso * 0.1), direccion * paso))
-            
+
         for p in puntos_t:
             row = self.tabla_pasos.rowCount()
             self.tabla_pasos.insertRow(row)
@@ -929,8 +971,9 @@ class ControlTemperaturaPane(QGroupBox):
         if row >= 0:
             self.tabla_pasos.removeRow(row)
 
+
 class TemperaturaTab(QWidget):
-    """Wrapper para la pestaña de prueba de Temperatura (LakeShore + Motor + K224 + A34420A)."""
+    """Wrapper para la pestaña de Temperatura (LakeShore + Motor + K224 + A34420A)."""
     def __init__(self):
         super().__init__()
         main_layout = QVBoxLayout()
@@ -938,31 +981,37 @@ class TemperaturaTab(QWidget):
 
         panes_layout = QHBoxLayout()
         self.params_pane = ControlTemperaturaPane()
-        self.instant_pane = Lecturas34420APane() # Reutilizamos el panel del voltímetro de IVsuplemento
-        
+        self.instant_pane = Lecturas34420APane()
+
         panes_layout.addWidget(self.params_pane, alignment=Qt.AlignmentFlag.AlignTop)
         panes_layout.addWidget(self.instant_pane, alignment=Qt.AlignmentFlag.AlignTop)
-        panes_layout.addStretch()
-        
+
         main_layout.addLayout(panes_layout)
         self.setLayout(main_layout)
 
+
+# ==============================================================================
+# UI: ESPECTROSCOPÍA DE IMPEDANCIA (TONGHUI TH2832)
+# ==============================================================================
 class ControlEspectroscopiaPane(QGroupBox):
     def __init__(self):
         super().__init__("Parámetros de Espectroscopía (TH2832)")
-        main_layout = QHBoxLayout(self) # Split principal: Izquierda / Derecha
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(6, 8, 6, 6)
 
         # ==========================================
-        # MITAD IZQUIERDA: Paneles Verticales (Grid de 3 Columnas)
+        # MITAD IZQUIERDA: Paneles de Configuración
         # ==========================================
         left_pane = QWidget()
         left_layout = QVBoxLayout(left_pane)
-        left_layout.setContentsMargins(0, 0, 10, 0)
-        
+        left_layout.setContentsMargins(0, 0, 8, 0)
+        left_layout.setSpacing(4)
+
         # --- 1. Generador de Frecuencias ---
         grp_freq = QGroupBox("Generador de Frecuencias")
         l_freq = QGridLayout(grp_freq)
-        
+        l_freq.setContentsMargins(6, 6, 6, 6)
+
         l_freq.addWidget(QLabel("Inicial (Hz):"), 0, 0)
         self.f_ini = QDoubleSpinBox()
         self.f_ini.setRange(20, 200000)
@@ -993,11 +1042,12 @@ class ControlEspectroscopiaPane(QGroupBox):
         # --- 2. Generador de Vdc Bias ---
         grp_vdc = QGroupBox("Configuración Vdc Bias")
         l_vdc = QGridLayout(grp_vdc)
-        
+        l_vdc.setContentsMargins(6, 6, 6, 6)
+
         self.chk_vdc_sweep = QCheckBox("Habilitar Barrido Vdc")
         self.chk_vdc_sweep.setChecked(False)
         l_vdc.addWidget(self.chk_vdc_sweep, 0, 0, 1, 3)
-        
+
         l_vdc.addWidget(QLabel("Vdc Fijo (V):"), 0, 3)
         self.vdc_fijo = QDoubleSpinBox()
         self.vdc_fijo.setRange(-5.0, 5.0)
@@ -1027,13 +1077,14 @@ class ControlEspectroscopiaPane(QGroupBox):
         # --- 3. Ajustes del LCR ---
         grp_lcr = QGroupBox("Ajustes TH2832")
         l_lcr = QGridLayout(grp_lcr)
-        
+        l_lcr.setContentsMargins(6, 6, 6, 6)
+
         l_lcr.addWidget(QLabel("Vac (Vrms):"), 0, 0)
         self.vac = QDoubleSpinBox()
         self.vac.setRange(0.01, 2.0)
         self.vac.setValue(0.1)
         l_lcr.addWidget(self.vac, 0, 1)
-        
+
         self.chk_alc = QCheckBox("ALC ON")
         self.chk_alc.setChecked(True)
         l_lcr.addWidget(self.chk_alc, 0, 2, 1, 2)
@@ -1060,7 +1111,7 @@ class ControlEspectroscopiaPane(QGroupBox):
         self.combo_rango.addItems(["AUTO", "3", "10", "30", "100", "300", "1000", "3000", "10000", "30000", "100000"])
         l_lcr.addWidget(self.combo_rango, 1, 5)
 
-        l_lcr.addWidget(QLabel("Trig Delay(s):"), 2, 0)
+        l_lcr.addWidget(QLabel("Trig Delay (s):"), 2, 0)
         self.trig_delay = QDoubleSpinBox()
         self.trig_delay.setRange(0.0, 60.0)
         l_lcr.addWidget(self.trig_delay, 2, 1)
@@ -1069,17 +1120,18 @@ class ControlEspectroscopiaPane(QGroupBox):
         # --- 4. Control Matriz ---
         grp_matriz = QGroupBox("Control Matriz HP34970A")
         l_matriz = QGridLayout(grp_matriz)
-        
+        l_matriz.setContentsMargins(6, 6, 6, 6)
+
         self.chk_matriz = QCheckBox("Usar Matriz (Ch1/Ch2)")
         self.chk_matriz.setChecked(False)
         l_matriz.addWidget(self.chk_matriz, 0, 0, 1, 2)
-        
+
         l_matriz.addWidget(QLabel("Canal 1:"), 0, 2)
         self.matriz_ch1 = QSpinBox()
         self.matriz_ch1.setRange(100, 999)
         self.matriz_ch1.setValue(212)
         l_matriz.addWidget(self.matriz_ch1, 0, 3)
-        
+
         l_matriz.addWidget(QLabel("Canal 2:"), 0, 4)
         self.matriz_ch2 = QSpinBox()
         self.matriz_ch2.setRange(100, 999)
@@ -1094,32 +1146,29 @@ class ControlEspectroscopiaPane(QGroupBox):
 
         btn_layout = QHBoxLayout()
         self.btn_medir = QPushButton("Iniciar Espectroscopía")
-        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 35px;") 
+        self.btn_medir.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; height: 32px;")
         self.btn_detencion = QPushButton("Detener")
-        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 35px;") 
-        
+        self.btn_detencion.setStyleSheet("background-color: #c62828; color: white; font-weight: bold; height: 32px;")
+
         btn_layout.addWidget(self.btn_medir)
         btn_layout.addWidget(self.btn_detencion)
         left_layout.addLayout(btn_layout)
-        
-        left_layout.addStretch() # Empuja todo hacia arriba suavemente
         main_layout.addWidget(left_pane, stretch=3)
 
         # ==========================================
-        # MITAD DERECHA: Listas Verticales Altas
+        # MITAD DERECHA: Tablas de Frecuencia y Vdc
         # ==========================================
         right_pane = QWidget()
         right_layout = QHBoxLayout(right_pane)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         # Columna Lista Frecuencias
         freq_col = QVBoxLayout()
         self.tabla_freq = QTableWidget(0, 1)
         self.tabla_freq.setHorizontalHeaderLabels(["Freqs (Hz)"])
         self.tabla_freq.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        # CRÍTICO: NO PONER setMaximumHeight AQUÍ
         freq_col.addWidget(self.tabla_freq)
-        
+
         btn_f_lay = QHBoxLayout()
         self.btn_eliminar_freq = QPushButton("Borrar Sel.")
         self.btn_limpiar_freq = QPushButton("Limpiar Todo")
@@ -1127,9 +1176,9 @@ class ControlEspectroscopiaPane(QGroupBox):
         btn_f_lay.addWidget(self.btn_limpiar_freq)
         freq_col.addLayout(btn_f_lay)
 
-        # --- NUEVOS BOTONES DE CORRECCIÓN ---
         corr_grp = QGroupBox("Corrección de Hardware (Spot)")
-        corr_lay = QVBoxLayout(corr_grp)
+        corr_lay = QHBoxLayout(corr_grp)
+        corr_lay.setContentsMargins(4, 4, 4, 4)
         self.btn_corr_open = QPushButton("Ejecutar OPEN")
         self.btn_corr_open.setStyleSheet("background-color: #bbdefb; font-weight: bold;")
         self.btn_corr_short = QPushButton("Ejecutar SHORT")
@@ -1137,8 +1186,6 @@ class ControlEspectroscopiaPane(QGroupBox):
         corr_lay.addWidget(self.btn_corr_open)
         corr_lay.addWidget(self.btn_corr_short)
         freq_col.addWidget(corr_grp)
-        
-        right_layout.addLayout(freq_col)
 
         right_layout.addLayout(freq_col)
 
@@ -1147,9 +1194,8 @@ class ControlEspectroscopiaPane(QGroupBox):
         self.tabla_vdc = QTableWidget(0, 1)
         self.tabla_vdc.setHorizontalHeaderLabels(["Vdc (V)"])
         self.tabla_vdc.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        # CRÍTICO: NO PONER setMaximumHeight AQUÍ
         vdc_col.addWidget(self.tabla_vdc)
-        
+
         btn_v_lay = QHBoxLayout()
         self.btn_eliminar_vdc = QPushButton("Borrar Sel.")
         self.btn_limpiar_vdc = QPushButton("Limpiar Todo")
@@ -1160,23 +1206,20 @@ class ControlEspectroscopiaPane(QGroupBox):
 
         main_layout.addWidget(right_pane, stretch=2)
 
-        # ==========================================
-        # POBLAR FRECUENCIAS POR DEFECTO
-        # ==========================================
+        # Poblar frecuencias por defecto
         frecuencias_default = [
-            20, 25, 30, 40, 50, 60, 75, 100, 120, 150, 200, 250, 300, 400, 500, 
-            600, 750, 1000, 1200, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7500, 
-            10000, 12000, 15000, 20000, 25000, 30000, 40000, 50000, 60000, 75000, 
+            20, 25, 30, 40, 50, 60, 75, 100, 120, 150, 200, 250, 300, 400, 500,
+            600, 750, 1000, 1200, 1500, 2000, 2500, 3000, 4000, 5000, 6000, 7500,
+            10000, 12000, 15000, 20000, 25000, 30000, 40000, 50000, 60000, 75000,
             100000, 120000, 150000, 200000
         ]
         for f in frecuencias_default:
             row = self.tabla_freq.rowCount()
             self.tabla_freq.insertRow(row)
             self.tabla_freq.setItem(row, 0, QTableWidgetItem(str(f)))
-        
-        # Permitir que el tab superior entero respire sin expandirse infinitamente
+
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        
+
         # Conexiones
         self.btn_add_freq.clicked.connect(self._add_freq)
         self.btn_add_vdc.clicked.connect(self._add_vdc)
@@ -1184,11 +1227,11 @@ class ControlEspectroscopiaPane(QGroupBox):
         self.btn_limpiar_vdc.clicked.connect(lambda: self.tabla_vdc.setRowCount(0))
         self.btn_eliminar_freq.clicked.connect(lambda: self._eliminar_fila(self.tabla_freq))
         self.btn_eliminar_vdc.clicked.connect(lambda: self._eliminar_fila(self.tabla_vdc))
-        
+
         self.combo_rsou.currentTextChanged.connect(self._validar_limites_bias)
         self.chk_vdc_sweep.toggled.connect(self._toggle_vdc_mode)
-        
-        self._toggle_vdc_mode(False) # Estado por defecto: Vdc Fijo
+
+        self._toggle_vdc_mode(False)
 
     def _toggle_vdc_mode(self, checked):
         self.vdc_fijo.setEnabled(not checked)
@@ -1207,39 +1250,40 @@ class ControlEspectroscopiaPane(QGroupBox):
         else:
             max_v = 5.0
             self.lbl_warning_is.setText(" ")
-            
+
         for caja in [self.v_ini, self.v_fin, self.vdc_fijo]:
             caja.blockSignals(True)
             caja.setRange(-max_v, max_v)
             caja.blockSignals(False)
 
     def _add_freq(self):
-        import numpy as np
         start = self.f_ini.value()
         stop = self.f_fin.value()
         pts = self.f_pts.value()
         escala = self.f_escala.currentText()
-        
-        if escala == "Log": frecuencias = list(np.logspace(np.log10(start), np.log10(stop), pts))
-        else: frecuencias = list(np.linspace(start, stop, pts))
-            
+
+        if escala == "Log":
+            frecuencias = list(np.logspace(np.log10(start), np.log10(stop), pts))
+        else:
+            frecuencias = list(np.linspace(start, stop, pts))
+
         for f in frecuencias:
-            f_int = int(round(f)) # Redondeo al entero más cercano
+            f_int = int(round(f))
             row = self.tabla_freq.rowCount()
             self.tabla_freq.insertRow(row)
             self.tabla_freq.setItem(row, 0, QTableWidgetItem(f"{f_int}"))
 
     def _add_vdc(self):
-        import numpy as np
         v_ini = self.v_ini.value()
         v_fin = self.v_fin.value()
         v_paso = self.v_paso.value()
-        
-        if v_ini == v_fin: voltajes = [v_fin]
+
+        if v_ini == v_fin:
+            voltajes = [v_fin]
         else:
             direccion = 1 if v_fin > v_ini else -1
             voltajes = list(np.arange(v_ini, v_fin + (direccion * v_paso * 0.1), direccion * v_paso))
-            
+
         for v in voltajes:
             row = self.tabla_vdc.rowCount()
             self.tabla_vdc.insertRow(row)
@@ -1250,6 +1294,7 @@ class ControlEspectroscopiaPane(QGroupBox):
         if row >= 0:
             tabla.removeRow(row)
 
+
 class EspectroscopiaTab(QWidget):
     def __init__(self):
         super().__init__()
@@ -1257,4 +1302,3 @@ class EspectroscopiaTab(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         self.params_pane = ControlEspectroscopiaPane()
         main_layout.addWidget(self.params_pane, alignment=Qt.AlignmentFlag.AlignTop)
-        main_layout.addStretch()

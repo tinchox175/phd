@@ -1,0 +1,3 @@
+Tiempo (min),I pulso (mA),I bias (mA),Vinst 1 (V),Rinst 1 (Ohm),Rrem 1 (Ohm),Vbias 1 (V),Vinst 2 (V),Rinst 2 (Ohm),Rrem 2 (Ohm),Vbias 2 (V),Ancho pulso (s),Periodo (s),Vcc (V),Vrange,NPLC,Ch2?,N bias,No_Off,Delta,Matriz
+0.1341,1e-05,0.0001,0.0022172,221719.99999999997,217844.99999999997,0.0217845,0.014573,1457300.0,1440170.0,0.144017,1.0,5.0,20.0,10 V,10.0,True,1,True,False,True
+0.2916,1e-05,0.0001,0.0022194,221939.99999999997,217943.99999999997,0.0217944,0.0146191,1461910.0,1440434.9999999998,0.1440435,1.0,5.0,20.0,10 V,10.0,True,1,True,False,True
