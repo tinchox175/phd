@@ -1,0 +1,112 @@
+PANI HUMIDITY CHAMBER - COMMAND REFERENCE
+Firmware FW0.3 (Arduino Due, Native USB port)
+=====================================================================
+
+CONNECTION
+----------
+Port      : Due Native USB port, e.g. /dev/serial/by-id/usb-Arduino_LLC_Arduino_Due-if00
+Baud      : any (ignored on the Native port) - but NEVER 1200, that erases the board
+Line end  : send "\n" (a "\r" is also accepted); replies end with "\n"
+pyvisa    : ASRL/dev/serial/by-id/<name>::INSTR, read/write termination "\n"
+
+RULES
+-----
+- One command per line. Upper/lower case doesn't matter.
+- A command ending in "?" is a question: the reply is a value.
+- A command without "?" is an action, followed by a space and its argument:
+  the reply is "OK" or an error.
+- EVERY command gets exactly ONE reply line. A host can always send a command
+  and then read one line.
+- Measurements are updated once per second. Queries return the latest values
+  instantly; asking faster than 1 Hz just repeats the same numbers.
+- "NAN" means no valid value (sensor missing or read failed).
+
+COMMANDS
+--------
+Command            Reply                         Meaning
+-----------------  ----------------------------  ------------------------------------------
+*IDN?              PANI-CHAMBER,DUE,FW0.3        Identify: maker, model, firmware version
+
+MEAS?              8 comma-separated fields      Everything at once (see MEAS? FORMAT)
+MEAS:TAIR?         e.g. 24.5625                  Box-air temperature, degC (DS18B20)
+MEAS:TJAR?         e.g. 24.31                    Jar temperature, degC (SHT30)
+MEAS:RH?           e.g. 52.40                    Jar relative humidity, % (SHT30)
+
+TEMP:SET <t>       OK | ERR:RANGE                Set box-air target, 10.0 to 50.0 degC
+TEMP:SET?          e.g. 25.00                    Current target
+
+CTRL ON|OFF        OK | ERR:ARG                  Start/stop automatic temperature control
+                   | ERR:FAULT_ACTIVE            (a fault is latched: clear it with *CLS)
+                   | ERR:NO_AIR_SENSOR           (no DS18B20 found at boot)
+CTRL?              1 | 0                         Is automatic control running?
+
+OUT:SET <u>        OK | ERR:ARG                  Manual TEC drive, -1 (full cool) .. +1 (full heat).
+                   | ERR:CTRL_ON                 Only while CTRL is OFF. Values beyond +/-1 are clipped.
+                   | ERR:FAULT_ACTIVE            |u| < 0.02 counts as 0.
+OUT?               e.g. 0.250                    Current TEC drive, -1 .. +1
+
+FAN ON|OFF         OK | ERR:ARG                  Jar fan on/off
+FAN?               1 | 0                         Jar fan state
+
+PID <kp> <ki> <kd> OK | ERR:ARG                  Set PID gains (all >= 0). Resets the PID history.
+PID?               e.g. 0.15000,0.00200,0.00000  Current gains
+
+SHT:HEAT ON|OFF    OK | ERR:ARG | ERR:NO_SHT     SHT30 built-in heater. Only for recovery after
+                                                 long high-RH exposure; it falsifies readings while on.
+
+STAT?              OK | FAULT:<name>             Fault status (see FAULTS)
+*CLS               OK                            Clear a latched fault. If the cause is still
+                                                 present, the fault comes back within 1 s.
+
+(anything else)    ERR:UNKNOWN                   Unknown command (usually a typo)
+
+ON/OFF arguments also accept 1/0.
+
+MEAS? FORMAT
+------------
+Example: 24.5625,24.31,52.40,0.000,25.00,0,1,OK
+
+  Field  Content                     Units / values
+  1      box-air temperature         degC, 4 decimals, or NAN
+  2      jar temperature             degC, 2 decimals, or NAN
+  3      jar relative humidity       %, 2 decimals, or NAN
+  4      TEC drive                   -1 .. +1 (before the 60 % duty cap)
+  5      setpoint                    degC
+  6      automatic control on        1 | 0
+  7      jar fan on                  1 | 0
+  8      status                      OK | FAULT:SENSOR | FAULT:OVERTEMP | FAULT:UNDERTEMP
+
+FAULTS
+------
+FAULT:SENSOR     Box-air sensor stopped answering while control was ON
+FAULT:OVERTEMP   Box air above 55 degC
+FAULT:UNDERTEMP  Box air below 5 degC
+
+On any fault: TEC switched off immediately, CTRL forced OFF, and the fault
+stays latched until *CLS. OUT:SET and CTRL ON are refused while it is active.
+
+ERRORS
+------
+ERR:RANGE          Value outside the allowed range
+ERR:ARG            Missing or invalid argument
+ERR:UNKNOWN        Unknown command
+ERR:CTRL_ON        Manual output refused because automatic control is running
+ERR:FAULT_ACTIVE   Refused because a fault is latched (check STAT?, then *CLS)
+ERR:NO_AIR_SENSOR  CTRL ON refused: no DS18B20 found at boot
+ERR:NO_SHT         SHT:HEAT refused: no SHT30 found at boot
+
+BOOT STATE
+----------
+CTRL OFF, TEC off, fan off, setpoint 25.00, PID 0.15 / 0.002 / 0.
+Sensors are detected only at boot: after wiring a sensor, reset the board.
+Hardware watchdog: if the firmware freezes for 8 s, the board reboots into this state.
+
+FIXED SETTINGS (change in firmware)
+-----------------------------------
+TEC duty cap 60 % of 12 V  |  PWM 20 kHz  |  control period 1 s  |  deadband 0.02
+Air limits 5 .. 55 degC    |  setpoint range 10 .. 50 degC
+
+VERSIONING
+----------
+Any change to this protocol bumps the firmware version (FW0.3 -> FW0.4) and
+this file. The PC driver checks *IDN? and refuses unknown versions.
