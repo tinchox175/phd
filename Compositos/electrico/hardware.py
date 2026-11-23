@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import csv
 import math
@@ -355,6 +356,191 @@ class TonghuiTH2832:
             return vm, im
         except Exception:
             return float('nan'), float('nan')
+
+
+# ==============================================================================
+# DRIVER DEL LCR GW INSTEK LCR-8101G (familia LCR-8000G / LCR-8101)
+# ==============================================================================
+class GwInstekLCR8101G:
+    """
+    Misma interfaz pública que TonghuiTH2832 para poder intercambiarlos en
+    HiloEspectroscopia. Comandos según el manual LCR-8101 (cap. Remote Control).
+
+    Limitaciones frente al TH2832 (los métodos correspondientes son no-ops):
+      - Sin bias DC interno -> set_vdc solo acepta 0 V.
+      - Sin ALC, Rsou fijo en 100 Ω, sin trigger delay en modo simple.
+      - El promedio no tiene comando remoto: se configura en el panel
+        (Menu -> F5 System -> Average).
+      - No hay consulta remota documentada para Vm/Im -> get_monitors() da NaN.
+
+    Medición: se usa X-R en circuito serie (equivalente a FUNC:IMP RX del TH2832).
+    Si el equipo no confirma ese modo, se pasa a Z-θ y se convierte a R, X.
+    Si tampoco puede confirmarse Z-θ, conectar() lanza error en vez de
+    arriesgarse a guardar columnas mal etiquetadas.
+    """
+    MODELO = "LCR-8101G"
+    _RE_NUM = re.compile(r'[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?')
+
+    def __init__(self, resource_name="GPIB0::5::INSTR", timeout=15000):
+        self.direccion = resource_name
+        self.rm = None
+        self.inst = None
+        self.timeout = timeout   # holgado: a 20 Hz en SLOW la medición tarda
+        self.modo_rx = True      # True: X-R directo | False: Z-θ convertido
+        self.idn = ""
+
+    # ---------------------------------------------------------------- utilidades
+    def _nums(self, texto):
+        return [float(n) for n in self._RE_NUM.findall(texto)]
+
+    def _query_int(self, cmd):
+        try:
+            vals = self._nums(self.inst.query(cmd))
+            return int(round(vals[0])) if vals else None
+        except Exception:
+            return None
+
+    def _limpiar_bus(self):
+        """Tras un timeout puede quedar una respuesta tardía en el buffer."""
+        try:
+            self.inst.clear()
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------------- conexión
+    def conectar(self, rm):
+        self.rm = rm
+        self.inst = self.rm.open_resource(self.direccion)
+        self.inst.timeout = self.timeout
+        # El manual: el equipo solo acepta LF como terminador
+        self.inst.write_termination = '\n'
+        self.inst.read_termination = '\n'
+
+        if self.direccion.upper().startswith("ASRL"):
+            from pyvisa.constants import Parity, StopBits
+            self.inst.baud_rate = 9600
+            self.inst.data_bits = 8
+            self.inst.parity = Parity.none
+            self.inst.stop_bits = StopBits.one
+
+        try:
+            self.idn = self.inst.query("*idn?").strip()
+        except Exception:
+            self.idn = "(sin respuesta a *idn?)"
+
+        self.inst.write("*cls")
+        self.inst.write(":meas:test:ac")
+        time.sleep(0.2)
+        self._configurar_rx()
+        print(f"LCR-8101G Conectado: {self.direccion} | {self.idn} | "
+              f"modo {'X-R serie' if self.modo_rx else 'Z-θ (convertido a R-X)'}")
+
+    def _configurar_rx(self):
+        # 1) Intento X-R serie (major 2 = X, minor 2 = R, equ-cct 1 = serie)
+        for cmd in (":meas:func:x;r", ":meas:func x;r"):
+            self.inst.write(":meas:equ-cct ser")
+            self.inst.write(cmd)
+            self.inst.write(":meas:equ-cct ser")
+            time.sleep(0.2)
+            if (self._query_int(":meas:func:major?") == 2 and
+                    self._query_int(":meas:func:minor?") == 2 and
+                    self._query_int(":meas:equ-cct?") == 1):
+                self.modo_rx = True
+                self.inst.write("*cls")
+                return
+
+        # 2) Respaldo: Z-θ (major 4 = Z; el segundo parámetro es siempre el ángulo)
+        for cmd in (":meas:func:z", ":meas:func z"):
+            self.inst.write(cmd)
+            time.sleep(0.2)
+            if self._query_int(":meas:func:major?") == 4:
+                self.modo_rx = False
+                self.inst.write("*cls")
+                return
+
+        raise RuntimeError(
+            "LCR-8101G: no se pudo confirmar el modo X-R ni Z-θ por remoto. "
+            "Revisar dirección/terminador o seleccionar X-R serie desde el panel."
+        )
+
+    def local(self):
+        """Devuelve el panel frontal al usuario."""
+        try:
+            self.inst.write("*loc")
+        except Exception:
+            pass
+
+    # ---------------------------------------------------------------- parámetros
+    def set_frecuencia(self, freq):
+        self.inst.write(f":meas:freq {float(freq):.4f}")
+
+    def get_frecuencia_real(self):
+        """El equipo redondea a 5 dígitos ('Nearest Available'): leer el valor aplicado."""
+        try:
+            vals = self._nums(self.inst.query(":meas:freq?"))
+            return vals[0] if vals else float('nan')
+        except Exception:
+            self._limpiar_bus()
+            return float('nan')
+
+    def set_vac(self, vac):
+        # 10 mV ~ 2 V en pasos de 1 mV. Se envía en mV (forma "200m" del manual)
+        # porque el equipo no acepta notación exponencial en el nivel.
+        mv = int(round(min(max(float(vac), 0.010), 2.0) * 1000))
+        self.inst.write(f":meas:lev {mv}m")
+
+    def set_vdc(self, vdc):
+        if abs(vdc) > 1e-9:
+            raise ValueError("El LCR-8101G no tiene bias DC interno: solo Vdc = 0 V.")
+
+    def set_alc(self, state):
+        pass  # no disponible
+
+    def set_rsou(self, rsou_val):
+        pass  # fijo en 100 Ω
+
+    def set_trigger_delay(self, delay_s):
+        pass  # solo existe en multi-step
+
+    def set_speed_and_avg(self, speed_str, avg):
+        speed = str(speed_str).strip().lower()
+        if speed not in ("max", "fast", "med", "slow"):
+            speed = "med"
+        self.inst.write(f":meas:speed {speed}")
+        # avg: sin comando remoto, se usa el valor configurado en el panel
+
+    def set_range(self, range_str):
+        r = str(range_str).strip().upper()
+        if r == "AUTO":
+            self.inst.write(":meas:range auto")
+        else:
+            self.inst.write(f":meas:range {int(r)}")
+
+    # ---------------------------------------------------------------- medición
+    def medir(self):
+        """Dispara y lee. Devuelve (R, X, status): 0 OK, 1 fuera de rango, -1 sin lectura."""
+        try:
+            vals = self._nums(self.inst.query(":meas:trig"))
+            if len(vals) < 2:
+                return float('nan'), float('nan'), -1
+            a, b = vals[0], vals[1]
+        except Exception:
+            self._limpiar_bus()
+            return float('nan'), float('nan'), -1
+
+        if self.modo_rx:
+            x, r = a, b                       # primario X, secundario R
+        else:
+            z, theta = a, b                   # |Z| y ángulo en grados
+            r = z * math.cos(math.radians(theta))
+            x = z * math.sin(math.radians(theta))
+
+        if any(math.isnan(v) or abs(v) > 1e30 for v in (r, x)):
+            return r, x, 1
+        return r, x, 0
+
+    def get_monitors(self):
+        return float('nan'), float('nan')
 
 
 # ==============================================================================
@@ -831,8 +1017,8 @@ class HiloMedicionDual(QThread):
                 if not self.corriendo:
                     return
 
-                corr_pulso = c_pulso if abs(c_pulso) >= 1e-5 else (1e-5 if c_pulso >= 0 else -1e-5)
-                corr_bias = c_bias if abs(c_bias) >= 1e-5 else (1e-5 if c_bias >= 0 else -1e-5)
+                corr_pulso = c_pulso
+                corr_bias = c_bias
 
                 b_str = str(c_bias).replace('.', 'p')
                 p_str = str(c_pulso).replace('.', 'p')
@@ -908,7 +1094,7 @@ class HiloMedicionDual(QThread):
                     self.fuente.operar()
 
                 tiempo_inicio_descarga = time.time()
-
+                self.voltimetro.configurar_rapido(nplc, 10)
                 while (time.time() - tiempo_inicio_descarga) < T_descarga and self.corriendo:
                     inicio_ciclo = time.time()
 
@@ -1380,8 +1566,13 @@ class HiloEspectroscopia(QThread):
         super().__init__()
         self.estado = estado_compartido
         self.corriendo = False
-        self.lcr = TonghuiTH2832(resource_name=self.estado.get('gpib_lcr', "GPIB0::11::INSTR"))
+        self.lcr = None
         self.matriz = SwitchMatrixHP34970A(resource_name=self.estado.get('gpib_matriz', "GPIB0::9::INSTR"))
+
+    def _crear_lcr(self):
+        if self.estado.get('lcr_modelo', 'TH2832') == GwInstekLCR8101G.MODELO:
+            return GwInstekLCR8101G(resource_name=self.estado.get('gpib_lcr_gw', "GPIB0::5::INSTR"))
+        return TonghuiTH2832(resource_name=self.estado.get('gpib_lcr', "GPIB0::11::INSTR"))
 
     def iniciar_medicion(self):
         self.corriendo = True
@@ -1396,6 +1587,16 @@ class HiloEspectroscopia(QThread):
         ch1_matriz = self.estado.get('matriz_ch1', 212)
         ch2_matriz = self.estado.get('matriz_ch2', 222)
         alc_habilitado = self.estado.get('alc_on', False)
+
+        self.lcr = self._crear_lcr()
+        es_gw = isinstance(self.lcr, GwInstekLCR8101G)
+        modelo = GwInstekLCR8101G.MODELO if es_gw else "TH2832"
+        if es_gw:
+            alc_habilitado = False
+            if any(abs(v) > 1e-9 for v in self.estado.get('lista_vdc', [0.0])):
+                self.error_detectado.emit("El LCR-8101G no tiene bias DC interno: use Vdc = 0 V.")
+                self.corriendo = False
+                return
 
         try:
             rm = pyvisa.ResourceManager()
@@ -1432,7 +1633,8 @@ class HiloEspectroscopia(QThread):
             "Tiempo (min)", "Vdc (V)", "Freq (Hz)",
             "R_ch1 (Ohm)", "X_ch1 (Ohm)", "|Z|_ch1 (Ohm)", "Theta_ch1 (Deg)", "Vm_ch1 (V)", "Im_ch1 (A)",
             "R_ch2 (Ohm)", "X_ch2 (Ohm)", "|Z|_ch2 (Ohm)", "Theta_ch2 (Deg)", "Vm_ch2 (V)", "Im_ch2 (A)",
-            "Status", "Vac (Vrms)", "ALC", "Speed", "Avg Pts", "Rsou (Ohm)", "Range", "Trig Delay (s)", "Matriz"
+            "Status", "Vac (Vrms)", "ALC", "Speed", "Avg Pts", "Rsou (Ohm)", "Range", "Trig Delay (s)", "Matriz",
+            "Equipo", "Freq Real (Hz)"
         ]
         with open(archivo_csv, 'w', newline='') as f:
             csv.writer(f).writerow(encabezado)
@@ -1467,6 +1669,11 @@ class HiloEspectroscopia(QThread):
                     self.lcr.set_frecuencia(freq)
                     delay_freq = 0.5 if freq < 100 else 0.15
                     time.sleep(delay_freq)
+                    freq_real = freq
+                    if es_gw:
+                        f_leida = self.lcr.get_frecuencia_real()
+                        if not math.isnan(f_leida):
+                            freq_real = f_leida
 
                     r1, x1, status1 = self.lcr.medir()
                     vm1, im1 = self.lcr.get_monitors()
@@ -1498,14 +1705,17 @@ class HiloEspectroscopia(QThread):
                     t_min = (time.time() - tiempo_inicio) / 60.0
                     status_general = status1 if status1 != 0 else status2
 
-                    self.datos_is.emit(vdc, freq, r1, x1, z1, theta1, r2, x2, z2, theta2, t_min, status_general)
+                    self.datos_is.emit(vdc, freq_real, r1, x1, z1, theta1, r2, x2, z2, theta2, t_min, status_general)
 
                     with open(archivo_csv, 'a', newline='') as f:
                         csv.writer(f).writerow([
                             f"{t_min:.4f}", vdc, freq,
                             r1, x1, z1, theta1, vm1, im1,
                             r2, x2, z2, theta2, vm2, im2,
-                            status_general, vac, alc_habilitado, speed, avg, rsou, rango, trig_delay, usa_matriz
+                            status_general, vac, alc_habilitado, speed,
+                            ("panel" if es_gw else avg), (100 if es_gw else rsou), rango,
+                            (0.0 if es_gw else trig_delay), usa_matriz,
+                            modelo, freq_real
                         ])
 
             self.estado_msg.emit("Espectroscopía Finalizada")
@@ -1514,6 +1724,8 @@ class HiloEspectroscopia(QThread):
             try:
                 self.lcr.set_vdc(0.0)
                 self.lcr.set_alc(False)
+                if es_gw:
+                    self.lcr.local()
             except Exception:
                 pass
             if usa_matriz and self.matriz.instrument:
@@ -1536,7 +1748,41 @@ class HiloCorreccionSpot(QThread):
         self.tipo = tipo
         self.lcr = TonghuiTH2832(resource_name=self.estado.get('gpib_lcr', "GPIB0::11::INSTR"))
 
+    def _run_gw(self):
+        lcr = GwInstekLCR8101G(resource_name=self.estado.get('gpib_lcr_gw', "GPIB0::5::INSTR"))
+        es_open = (self.tipo == "OPEN")
+        cmd = ":cal:oc-trim 4" if es_open else ":cal:sc-trim 4"   # 4 = All frequency
+        try:
+            rm = pyvisa.ResourceManager()
+            lcr.conectar(rm)
+            self.estado_msg.emit(
+                f"LCR-8101G: trimming {'OPEN' if es_open else 'SHORT'} (todas las frecuencias)... "
+                "puede tardar varios minutos, no tocar las puntas."
+            )
+            lcr.inst.timeout = 300000
+            lcr.inst.write(cmd)
+            res = lcr._query_int(":cal:res?")   # bloquea hasta que termina el trim
+            if res == 1:
+                self.finalizado.emit(f"Trim {'OPEN' if es_open else 'SHORT'} del LCR-8101G completado (PASS).")
+            else:
+                self.error_detectado.emit(
+                    f"Trim {'OPEN' if es_open else 'SHORT'} del LCR-8101G falló (respuesta :cal:res? = {res})."
+                )
+        except Exception as e:
+            self.error_detectado.emit(f"Error durante trim LCR-8101G: {e}")
+        finally:
+            if lcr.inst:
+                try:
+                    lcr.inst.timeout = lcr.timeout
+                    lcr.local()
+                except Exception:
+                    pass
+
     def run(self):
+        if self.estado.get('lcr_modelo', 'TH2832') == GwInstekLCR8101G.MODELO:
+            self._run_gw()
+            return
+
         frecuencias = self.estado.get('frecuencias_corr', [])
         if not frecuencias:
             self.error_detectado.emit("No hay frecuencias cargadas para corregir.")

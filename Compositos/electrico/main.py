@@ -488,7 +488,7 @@ class IVMeasurementApp(QMainWindow):
 
         self.setup_tabs.addTab(self.dual_inst_tab, "Setup: K224 + 34420A")
         self.setup_tabs.addTab(self.pulsos_tab, "Transientes (Osc + AFG)")
-        self.setup_tabs.addTab(self.espectroscopia_tab, "Espectroscopía (TH2832)")
+        self.setup_tabs.addTab(self.espectroscopia_tab, "Espectroscopía (LCR)")
         self.setup_tabs.addTab(self.relajacion_tab, "Relajación")
         self.setup_tabs.addTab(self.temperatura_tab, "Temperatura (LakeShore)")
         self.setup_tabs.addTab(self.smu_tab, "Setup: B2902A SMU")
@@ -1083,6 +1083,9 @@ class IVMeasurementApp(QMainWindow):
 
     def _iniciar_correccion(self, tipo):
         pane = self.espectroscopia_tab.params_pane
+        es_gw = pane.es_gw()
+        self.estado_compartido['lcr_modelo'] = pane.combo_lcr.currentText()
+        self.estado_compartido['gpib_lcr_gw'] = pane.gw_resource.text().strip()
 
         lista_freq = []
         for row in range(pane.tabla_freq.rowCount()):
@@ -1092,11 +1095,11 @@ class IVMeasurementApp(QMainWindow):
             except ValueError:
                 pass
 
-        if not lista_freq:
+        if not lista_freq and not es_gw:   # el trim del GW es "All freq", no usa la lista
             self._mostrar_error("La tabla de frecuencias está vacía.")
             return
 
-        if len(lista_freq) > 201:
+        if len(lista_freq) > 201 and not es_gw:
             self.status_bar.showMessage("⚠ Advertencia: El LCR solo soporta 201 puntos. Se truncará la lista.", 5000)
 
         self.estado_compartido['frecuencias_corr'] = lista_freq
@@ -1106,6 +1109,7 @@ class IVMeasurementApp(QMainWindow):
         self.worker_corr.estado_msg.connect(lambda msg: self.status_bar.showMessage(msg))
         self.worker_corr.finalizado.connect(self._finalizar_correccion)
         self.worker_corr.error_detectado.connect(self._mostrar_error)
+        self.worker_corr.finished.connect(self._rehabilitar_botones_corr)
 
         pane.btn_corr_open.setEnabled(False)
         pane.btn_corr_short.setEnabled(False)
@@ -1126,13 +1130,22 @@ class IVMeasurementApp(QMainWindow):
         pane.btn_corr_short.setEnabled(True)
         pane.btn_medir.setEnabled(True)
 
+    def _rehabilitar_botones_corr(self):
+        pane = self.espectroscopia_tab.params_pane
+        pane.btn_corr_open.setEnabled(True)
+        pane.btn_corr_short.setEnabled(True)
+        pane.btn_medir.setEnabled(True)
+
     def _iniciar_medicion_is(self):
         if self.worker_is.corriendo:
             return
 
         pane = self.espectroscopia_tab.params_pane
+        es_gw = pane.es_gw()
 
-        if pane.chk_vdc_sweep.isChecked():
+        if es_gw:
+            lista_vdc = [0.0]   # LCR-8101G: sin bias DC interno
+        elif pane.chk_vdc_sweep.isChecked():
             lista_vdc = []
             if pane.tabla_vdc.rowCount() == 0:
                 self._mostrar_error("La tabla de Vdc está vacía para el barrido.")
@@ -1172,10 +1185,12 @@ class IVMeasurementApp(QMainWindow):
             ruta_archivo += '.csv'
 
         self.estado_compartido.update({
+            'lcr_modelo': pane.combo_lcr.currentText(),
+            'gpib_lcr_gw': pane.gw_resource.text().strip(),
             'lista_vdc': lista_vdc,
             'frecuencias': lista_freq,
             'vac': pane.vac.value(),
-            'alc_on': pane.chk_alc.isChecked(),
+            'alc_on': pane.chk_alc.isChecked() and not es_gw,
             'speed': pane.combo_speed.currentText(),
             'avg': pane.avg_pts.value(),
             'rsou': int(pane.combo_rsou.currentText()),

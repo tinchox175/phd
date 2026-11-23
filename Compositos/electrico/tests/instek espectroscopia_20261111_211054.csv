@@ -1,0 +1,4 @@
+Tiempo (min),Vdc (V),Freq (Hz),R_ch1 (Ohm),X_ch1 (Ohm),|Z|_ch1 (Ohm),Theta_ch1 (Deg),Vm_ch1 (V),Im_ch1 (A),R_ch2 (Ohm),X_ch2 (Ohm),|Z|_ch2 (Ohm),Theta_ch2 (Deg),Vm_ch2 (V),Im_ch2 (A),Status,Vac (Vrms),ALC,Speed,Avg Pts,Rsou (Ohm),Range,Trig Delay (s),Matriz,Equipo,Freq Real (Hz)
+0.1297,0.0,20.0,9999.88,-3.29977,9999.88054443062,-0.01890651562835684,nan,nan,nan,nan,nan,nan,nan,nan,0,0.2,False,MED,panel,100,AUTO,0.0,False,LCR-8101G,20.0
+0.1587,0.0,45.0,9999.69,-10.5075,9999.695520547426,-0.060205384532513465,nan,nan,nan,nan,nan,nan,nan,nan,0,0.2,False,MED,panel,100,AUTO,0.0,False,LCR-8101G,45.0
+0.1819,0.0,100.0,9999.15,-3.11664,9999.150485713519,-0.017858549224573462,nan,nan,nan,nan,nan,nan,nan,nan,0,0.2,False,MED,panel,100,AUTO,0.0,False,LCR-8101G,100.0

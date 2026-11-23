@@ -1041,6 +1041,7 @@ class ControlEspectroscopiaPane(QGroupBox):
 
         # --- 2. Generador de Vdc Bias ---
         grp_vdc = QGroupBox("Configuración Vdc Bias")
+        self.grp_vdc = grp_vdc
         l_vdc = QGridLayout(grp_vdc)
         l_vdc.setContentsMargins(6, 6, 6, 6)
 
@@ -1075,7 +1076,7 @@ class ControlEspectroscopiaPane(QGroupBox):
         left_layout.addWidget(grp_vdc)
 
         # --- 3. Ajustes del LCR ---
-        grp_lcr = QGroupBox("Ajustes TH2832")
+        grp_lcr = QGroupBox("Ajustes LCR")
         l_lcr = QGridLayout(grp_lcr)
         l_lcr.setContentsMargins(6, 6, 6, 6)
 
@@ -1115,6 +1116,16 @@ class ControlEspectroscopiaPane(QGroupBox):
         self.trig_delay = QDoubleSpinBox()
         self.trig_delay.setRange(0.0, 60.0)
         l_lcr.addWidget(self.trig_delay, 2, 1)
+
+        l_lcr.addWidget(QLabel("Equipo:"), 2, 2)
+        self.combo_lcr = QComboBox()
+        self.combo_lcr.addItems(self.MODELOS_LCR)
+        l_lcr.addWidget(self.combo_lcr, 2, 3)
+
+        l_lcr.addWidget(QLabel("VISA GW:"), 2, 4)
+        self.gw_resource = QLineEdit("GPIB0::5::INSTR")
+        self.gw_resource.setToolTip("Dirección VISA del LCR-8101G (GPIB por defecto 5; o ASRLx::INSTR por RS-232)")
+        l_lcr.addWidget(self.gw_resource, 2, 5)
         left_layout.addWidget(grp_lcr)
 
         # --- 4. Control Matriz ---
@@ -1177,6 +1188,7 @@ class ControlEspectroscopiaPane(QGroupBox):
         freq_col.addLayout(btn_f_lay)
 
         corr_grp = QGroupBox("Corrección de Hardware (Spot)")
+        self.corr_grp = corr_grp
         corr_lay = QHBoxLayout(corr_grp)
         corr_lay.setContentsMargins(4, 4, 4, 4)
         self.btn_corr_open = QPushButton("Ejecutar OPEN")
@@ -1230,8 +1242,78 @@ class ControlEspectroscopiaPane(QGroupBox):
 
         self.combo_rsou.currentTextChanged.connect(self._validar_limites_bias)
         self.chk_vdc_sweep.toggled.connect(self._toggle_vdc_mode)
+        self.combo_lcr.currentTextChanged.connect(self._cambiar_equipo)
 
         self._toggle_vdc_mode(False)
+        self._cambiar_equipo(self.combo_lcr.currentText())
+
+    # ------------------------------------------------------------------
+    # Selección de equipo LCR
+    # ------------------------------------------------------------------
+    MODELOS_LCR = ["TH2832", "LCR-8101G"]
+    _SPEEDS = {"TH2832": ["SLOW", "MED", "FAST"], "LCR-8101G": ["MAX", "FAST", "MED", "SLOW"]}
+    _RANGOS = {"TH2832": ["AUTO", "3", "10", "30", "100", "300", "1000", "3000", "10000", "30000", "100000"],
+               "LCR-8101G": ["AUTO", "1", "2", "3", "4", "5", "6", "7"]}
+    _FMAX = {"TH2832": 200000, "LCR-8101G": 1000000}
+
+    def es_gw(self):
+        return self.combo_lcr.currentText() == "LCR-8101G"
+
+    @staticmethod
+    def _repoblar(combo, items, defecto=None):
+        actual = combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(items)
+        if actual in items:
+            combo.setCurrentText(actual)
+        else:
+            combo.setCurrentText(defecto if defecto in items else items[0])
+        combo.blockSignals(False)
+
+    def _cambiar_equipo(self, modelo):
+        gw = (modelo == "LCR-8101G")
+        self.setTitle(f"Parámetros de Espectroscopía ({modelo})")
+
+        self._repoblar(self.combo_speed, self._SPEEDS[modelo], defecto="MED")
+        self._repoblar(self.combo_rango, self._RANGOS[modelo], defecto="AUTO")
+
+        fmax = self._FMAX[modelo]
+        for caja in (self.f_ini, self.f_fin):
+            caja.setMaximum(fmax)
+        if not gw and self.f_fin.value() > fmax:
+            self.f_fin.setValue(fmax)
+
+        # Funciones que el LCR-8101G no tiene por remoto
+        motivo = "No disponible en el LCR-8101G"
+        for w, tip in ((self.chk_alc, motivo),
+                       (self.combo_rsou, "LCR-8101G: Rsou fijo 100 Ω"),
+                       (self.trig_delay, motivo + " (solo en multi-step)"),
+                       (self.avg_pts, "LCR-8101G: configurar en el panel (Menu → F5 System → Average)")):
+            w.setEnabled(not gw)
+            w.setToolTip(tip if gw else "")
+
+        # Sin bias DC interno -> Vdc fijo en 0
+        if gw:
+            self.chk_vdc_sweep.setChecked(False)
+            self.vdc_fijo.setValue(0.0)
+        self.grp_vdc.setEnabled(not gw)
+        self.grp_vdc.setToolTip("LCR-8101G: sin bias DC interno (Vdc = 0 V)" if gw else "")
+
+        self.gw_resource.setEnabled(gw)
+
+        if gw:
+            self.corr_grp.setTitle("Trim LCR-8101G (todas las frecuencias)")
+            self.btn_corr_open.setText("Trim OPEN")
+            self.btn_corr_short.setText("Trim SHORT")
+            self.lbl_warning_is.setText(
+                "LCR-8101G: Vdc = 0, sin ALC, Rsou 100 Ω fijo. Promedio desde el panel del equipo."
+            )
+        else:
+            self.corr_grp.setTitle("Corrección de Hardware (Spot)")
+            self.btn_corr_open.setText("Ejecutar OPEN")
+            self.btn_corr_short.setText("Ejecutar SHORT")
+            self._validar_limites_bias(self.combo_rsou.currentText())
 
     def _toggle_vdc_mode(self, checked):
         self.vdc_fijo.setEnabled(not checked)

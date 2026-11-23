@@ -1,0 +1,9 @@
+Tiempo (min),I pulso (mA),I bias (mA),Vinst 1 (V),Rinst 1 (Ohm),Rrem 1 (Ohm),Vbias 1 (V),Vinst 2 (V),Rinst 2 (Ohm),Rrem 2 (Ohm),Vbias 2 (V),Ancho pulso (s),Periodo (s),Vcc (V),Vrange,NPLC,Ch2?,N bias,No_Off,Delta,Matriz
+0.0237,0.0,0.001,-0.0263688,nan,-27094.7,-0.0270947,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
+0.0571,0.0,0.001,-0.0272707,nan,-26588.8,-0.0265888,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
+0.0905,0.001,0.001,-0.0262368,-26236.800000000003,-26473.300000000003,-0.0264733,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
+0.1241,0.002,0.001,-0.0268967,-13448.35,-26506.300000000003,-0.0265063,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
+0.1575,0.003,0.001,-0.0262368,-8745.6,-25587.9,-0.0255879,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
+0.1911,0.004,0.001,-0.0238996,-5974.900000000001,-23916.1,-0.0239161,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
+0.2247,0.005,0.001,-0.0237457,-4749.14,-24246.100000000002,-0.0242461,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
+0.2581,0.006,0.001,-0.0240316,-4005.2666666666664,-23520.200000000004,-0.0235202,nan,nan,nan,nan,0.3,1.0,30.0,10 V,2.0,False,1,False,False,False
